@@ -262,6 +262,11 @@ function start_ovs {
 
         _neutron_ovs_base_setup_bridge br-int
         ovs-vsctl --no-wait set bridge br-int fail-mode=secure other-config:disable-in-band=true
+	#
+	# Create firewall bridge
+	#
+        _neutron_ovs_base_setup_bridge br-fw
+        ovs-vsctl --no-wait set bridge br-fw fail-mode=secure other-config:disable-in-band=true
 
         local ovswd_logfile="ovs-switchd.log.${CURRENT_LOG_TIME}"
         bash -c "cd '$LOGDIR' && touch '$ovswd_logfile' && ln -sf '$ovswd_logfile' ovs-vswitchd.log"
