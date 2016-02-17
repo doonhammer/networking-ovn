@@ -107,7 +107,8 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
                                    "subnet_allocation",
                                    "availability_zone",
                                    "network_availability_zone",
-                                   "net-mtu"]
+                                   "net-mtu",
+                                   "sfi"]
     supported_qos_rule_types = [qos_consts.RULE_TYPE_BANDWIDTH_LIMIT]
 
     def __init__(self):
@@ -1298,3 +1299,18 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
     def set_port_status_down(self, port_id):
         ctx = n_context.get_admin_context()
         self._update_port_status(ctx, port_id, const.PORT_STATUS_DOWN)
+
+    #
+    # SFI Extension functions
+    #
+    def create_sfi(self,ctx,sfi):
+        LOG.info(_("create sfi"))
+
+    def update_sfi(self,ctx, sfi):
+        LOG.info(_("update sfi"))
+
+    def get_sfi(self, ctx, sfi_id):
+        LOG.info(_("get sfi"))
+
+    def delete_sfi(self,ctx, sfi_id):
+        LOG.info(_("delete sfi"))
