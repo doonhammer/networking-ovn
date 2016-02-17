@@ -70,6 +70,7 @@ from networking_ovn.common import utils
 from networking_ovn import ovn_nb_sync
 from networking_ovn.ovsdb import impl_idl_ovn
 from networking_ovn.ovsdb import ovsdb_monitor
+from networking_ovn.extensions import sfi
 
 LOG = log.getLogger(__name__)
 
