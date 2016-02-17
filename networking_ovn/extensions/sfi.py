@@ -16,7 +16,7 @@ RESOURCE_ATTRIBUTE_MAP = {
     'credential': {'allow_post': True, 'allow_put': True, 'is_visible': True},
     'tenant_id':  {'allow_post': True, 'allow_put': True, 
                    'required_by_policy': True,
-                   'validate': ['type:string': None},
+                   'validate': {'type:string': None},
                    'is_visible': True},
     }
 }
