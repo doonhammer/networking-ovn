@@ -6,7 +6,7 @@
 # Author: John McDowall jmcdowall@paloaltonetworks.com
 #
 from neutron.api import extensions
-from neutron import mananger
+from neutron import manager
 from neutron.api.v2 import base
 
 RESOURCE_ATTRIBUTE_MAP = {
