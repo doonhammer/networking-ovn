@@ -21,7 +21,7 @@ RESOURCE_ATTRIBUTE_MAP = {
     }
 }
 
-class sfi(extensions.ExtensionDescriptor):
+class Sfi(extensions.ExtensionDescriptor):
     #
     # Class to define the methods for service function insertion
     #
