@@ -691,7 +691,7 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
         tag = None
         port_type = None
         options = None
-
+        LOG.info("In get_ovn_port_info: %s",port)
         if vtep_physical_switch:
             vtep_logical_switch = binding_profile.get('vtep_logical_switch')
             port_type = 'vtep'
@@ -704,6 +704,7 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
             parent_name = binding_profile.get('parent_name')
             tag = binding_profile.get('tag')
             fixed_ips = port.get('fixed_ips')
+            LOG.info("Fixed IP's in get_ovn_port_info: %s",fixed_ips)
             if fixed_ips:
                 addresses = [port['mac_address'] + ' ' + ip['ip_address'] for
                              ip in fixed_ips]
