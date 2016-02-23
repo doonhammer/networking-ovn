@@ -1308,11 +1308,14 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
     def create_sfi(self,ctx,sfi):
         LOG.info(_("create sfi"))
 
-    def update_sfi(self,ctx, sfi):
+    def update_sfi(self,ctx,id, sfi):
         LOG.info(_("update sfi"))
 
-    def get_sfi(self, ctx, sfi_id):
+    def get_sfi(self, ctx, id,fields):
         LOG.info(_("get sfi"))
 
-    def delete_sfi(self,ctx, sfi_id):
+    def get_sfis(self, ctx, filters,fields):
+        LOG.info(_("get sfis"))
+
+    def delete_sfi(self,ctx, id):
         LOG.info(_("delete sfi"))
