@@ -1306,18 +1306,43 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
     # SFI Extension functions
     #
     def create_sfi(self,context,sfi):
-        LOG.info(_("create sfi"))
-        return sfi
+        s = sfi['sfi']
+        sfi_id = s.get('id') or uuidutils.generate_uuid()
+        network_id = s['tenant_id']
+        sfi_data = dict( tenant_id = tenant_id,
+                         name = s['name'],
+                         id = sfi_id,
+                         network_id = s['network_id'],
+                         in_port_id = s['in_port_id'],
+                         out_port_id = s['out_port_id'],
+                         firewall_id = s['firewall_id'],
+                         application_id = s['application_id'],
+                         device_owner = s['device_owner'])
+        with context.session.begin(subtransactions=True):
+            # Ensure that the network exists.
+            self._get_network(context, network_id)
+
+            # Create the service
+            db_sfi = models_v2.Sfi(**sfi_data)
+            context.session.add(db_sfi)
+
+        return self._make_sfi_dict(sfi_port, process_extensions=False)
+
 
     def update_sfi(self,context,id, sfi):
-        LOG.info(_("update sfi"))
-        return sfi
+        current_sfi = self._get_sfi(context,id)
+        LOG.debug("get sfi: %s\n",current_sfi)
+        return self._make_sfi_dict(current_sfi,None)
 
-    def get_sfi(self, context, id,fields):
-        LOG.info(_("get sfi"))
+    def get_sfi(self, context, id,fields=None):
+        sfi = self._get_sfi(context,id)
+        LOG.debug("get sfi: %s\n",sfi)
+        return self._make_sfi_dict(sfi,fields)
 
-    def get_sfis(self, context, filters,fields):
-        LOG.info(_("get sfis"))
+    def get_sfis(self, context, filters=None,fields=None):
+        sfi = self._get_sfi(context,id)
+        LOG.debug("get sfis: %s\n",sfi)
+        return self._make_sfi_dict(sfi,fields)
 
     def delete_sfi(self,context, id):
         LOG.info(_("delete sfi"))
