@@ -10,7 +10,7 @@ from neutron import manager
 from neutron.api.v2 import base
 
 RESOURCE_ATTRIBUTE_MAP = {
-    'sfi': {
+    'sfis': {
     'name': {'allow_post': True, 'allow_put': True, 'is_visible': True},
     'priority': {'allow_post': True, 'allow_put': True, 'is_visible': True},
     'credential': {'allow_post': True, 'allow_put': True, 'is_visible': True},
