@@ -12,8 +12,11 @@ from neutron.api.v2 import base
 RESOURCE_ATTRIBUTE_MAP = {
     'sfis': {
     'name': {'allow_post': True, 'allow_put': True, 'is_visible': True},
-    'priority': {'allow_post': True, 'allow_put': True, 'is_visible': True},
-    'credential': {'allow_post': True, 'allow_put': True, 'is_visible': True},
+    'network_id': {'allow_post': True, 'allow_put': True, 'is_visible': True},
+    'in_port_id': {'allow_post': True, 'allow_put': True, 'is_visible': True},
+    'out_port_id': {'allow_post': True, 'allow_put': True, 'is_visible': True},
+    'firewall_id': {'allow_post': True, 'allow_put': True, 'is_visible': True},
+    'application_id': {'allow_post': True, 'allow_put': True, 'is_visible': True},
     'tenant_id':  {'allow_post': True, 'allow_put': True, 
                    'required_by_policy': True,
                    'validate': {'type:string': None},
