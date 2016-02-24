@@ -70,7 +70,7 @@ from networking_ovn.common import utils
 from networking_ovn import ovn_nb_sync
 from networking_ovn.ovsdb import impl_idl_ovn
 from networking_ovn.ovsdb import ovsdb_monitor
-from networking_ovn.extensions import sfi
+from networking_ovn.extensions import sfis
 
 LOG = log.getLogger(__name__)
 
@@ -1305,17 +1305,17 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
     #
     # SFI Extension functions
     #
-    def create_sfi(self,ctx,sfi):
+    def create_sfi(self,context,sfi):
         LOG.info(_("create sfi"))
 
-    def update_sfi(self,ctx,id, sfi):
+    def update_sfi(self,context,id, sfi):
         LOG.info(_("update sfi"))
 
-    def get_sfi(self, ctx, id,fields):
+    def get_sfi(self, context, id,fields):
         LOG.info(_("get sfi"))
 
-    def get_sfis(self, ctx, filters,fields):
+    def get_sfis(self, context, filters,fields):
         LOG.info(_("get sfis"))
 
-    def delete_sfi(self,ctx, id):
+    def delete_sfi(self,context, id):
         LOG.info(_("delete sfi"))
