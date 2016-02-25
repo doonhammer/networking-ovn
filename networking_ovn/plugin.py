@@ -1309,6 +1309,7 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
     #
     def create_sfi(self,context,sfi):
         s = sfi['sfi']
+        network_id = s['network_id']
         LOG.debug("SFI content: %s\n\n",s)
         sfi_id = s.get('id') or uuidutils.generate_uuid()
         sfi_data = dict( tenant_id = s['tenant_id'],
