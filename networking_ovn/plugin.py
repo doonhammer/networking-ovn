@@ -1,3 +1,4 @@
+
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -1308,6 +1309,7 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
     #
     def create_sfi(self,context,sfi):
         s = sfi['sfi']
+        LOG.debug("SFI content: %s\n\n",s)
         sfi_id = s.get('id') or uuidutils.generate_uuid()
         sfi_data = dict( tenant_id = s['tenant_id'],
                          name = s['name'],
@@ -1316,8 +1318,8 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
                          in_port_id = s['in_port_id'],
                          out_port_id = s['out_port_id'],
                          firewall_id = s['firewall_id'],
-                         application_id = s['application_id'],
-                         device_owner = s['device_owner'])
+                         application_id = s['application_id'])
+
         with context.session.begin(subtransactions=True):
             # Ensure that the network exists.
             self._get_network(context, network_id)
