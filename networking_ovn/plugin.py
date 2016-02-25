@@ -1340,9 +1340,17 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
         return self._make_sfi_dict(sfi,fields)
 
     def get_sfis(self, context, filters=None,fields=None):
-        sfi = self._get_sfi(context,id)
-        LOG.debug("get sfis: %s\n",sfi)
-        return self._make_sfi_dict(sfi,fields)
+        LOG.debug("get sfis") 
+        marker_obj = self._get_marker_obj(context, 'sfi', None, None)
+        query = self._model_query(context,models_v2.Sfi)
+        items = []
+        for c in query:
+                   items.append(self._make_sfi_dict(c, fields))
+ 
+        LOG.debug("get sfis: %s\n",items) 
+        return items
+ 
+ 
 
     def delete_sfi(self,context, id):
         LOG.info(_("delete sfi"))
