@@ -20,6 +20,7 @@ from oslo_config import cfg
 from oslo_log import log
 from oslo_utils import importutils
 from sqlalchemy.orm import exc as sa_exc
+from oslo_utils import uuidutils
 
 from neutron.agent.ovsdb.native import idlutils
 from neutron.api.rpc.agentnotifiers import dhcp_rpc_agent_api
