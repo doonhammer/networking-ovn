@@ -1318,8 +1318,7 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
                          out_port_id = s['out_port_id'],
                          firewall_id = s['firewall_id'],
                          application_id = s['application_id'],
-                         device_owner = s['device_owner'],
-                         tenant_id = s['tenant_id']        )
+                         device_owner = s['device_owner'])
         with context.session.begin(subtransactions=True):
             # Ensure that the network exists.
             self._get_network(context, network_id)
