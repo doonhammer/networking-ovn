@@ -1329,7 +1329,7 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
             db_sfi = models_v2.Sfi(**sfi_data)
             context.session.add(db_sfi)
 
-        return self._make_sfi_dict(sfi_port, process_extensions=False)
+        return self._make_sfi_dict(sfi_data, process_extensions=False)
 
 
     def update_sfi(self,context,id, sfi):
