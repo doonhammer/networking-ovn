@@ -72,7 +72,7 @@ class API(object):
 
 
 
-  @abc.abstractmethod
+    @abc.abstractmethod
     def create_lservice(self, name, lswitch_name, may_exist=True, **columns):
         """Create a command to add an OVN lservice
 
