@@ -161,6 +161,84 @@ class DelLogicalPortCommand(BaseCommand):
         setattr(lswitch, 'ports', ports)
         self.api._tables['Logical_Port'].rows[lport.uuid].delete()
 
+class AddLogicalServiceCommand(BaseCommand):
+    def __init__(self, api, lservice, lswitch, may_exist, **columns):
+        super(AddLogicalServiceCommand, self).__init__(api)
+        self.lservice = lservice
+        self.lswitch = lswitch
+        self.may_exist = may_exist
+        self.columns = columns
+
+    def run_idl(self, txn):
+        try:
+            lswitch = idlutils.row_by_value(self.api.idl, 'Logical_Switch',
+                                            'name', self.lswitch)
+            services= getattr(lswitch, 'services', [])
+        except idlutils.RowNotFound:
+            msg = _("Logical Switch %s does not exist") % self.lswitch
+            raise RuntimeError(msg)
+        if self.may_exist:
+            service = idlutils.row_by_value(self.api.idl,
+                                         'Logical_Service', 'name',
+                                         self.lservice, None)
+            if service:
+                return
+
+        lswitch.verify('services')
+
+        service = txn.insert(self.api._tables['Logical_Service'])
+        service.name = self.lservice
+        for col, val in self.columns.items():
+            setattr(service, col, val)
+        # add the newly created service to existing lswitch
+        services.append(service.uuid)
+        setattr(lswitch, 'services', services)
+
+class SetLogicalServiceCommand(BaseCommand):
+    def __init__(self, api, lservice, if_exists, **columns):
+        super(SetLogicalServiceCommand, self).__init__(api)
+        self.lservice = lservice
+        self.columns = columns
+        self.if_exists = if_exists
+
+    def run_idl(self, txn):
+        try:
+            service = idlutils.row_by_value(self.api.idl, 'Logical_Service',
+                                            'name', self.lservice)
+        except idlutils.RowNotFound:
+            if self.if_exists:
+                return
+            msg = _("Logical Service %s does not exist") % self.lservice
+            raise RuntimeError(msg)
+
+        for col, val in self.columns.items():
+            setattr(service, col, val)
+
+class DelLogicalServiceCommand(BaseCommand):
+    def __init__(self, api, lservice, lswitch, if_exists):
+        super(DelLogicalServiceCommand, self).__init__(api)
+        self.lservice = lservice
+        self.lswitch = lswitch
+        self.if_exists = if_exists
+
+    def run_idl(self, txn):
+        try:
+            lservice = idlutils.row_by_value(self.api.idl, 'Logical_Service',
+                                             'name', self.lservice)
+            lswitch = idlutils.row_by_value(self.api.idl, 'Logical_Switch',
+                                            'name', self.lswitch)
+            services = getattr(lswitch, 'services', [])
+        except idlutils.RowNotFound:
+            if self.if_exists:
+                return
+            msg = _("Service %s does not exist") % self.lservice
+            raise RuntimeError(msg)
+
+        lswitch.verify('services')
+
+        services.remove(lservice)
+        setattr(lswitch, 'services', services)
+        self.api._tables['Logical_Service'].rows[lservice.uuid].delete()
 
 class AddLRouterCommand(BaseCommand):
     def __init__(self, api, name, may_exist, **columns):

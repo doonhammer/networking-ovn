@@ -69,6 +69,55 @@ class API(object):
         :returns:         :class:`Command` with no result
         """
 
+
+
+
+  @abc.abstractmethod
+    def create_lservice(self, name, lswitch_name, may_exist=True, **columns):
+        """Create a command to add an OVN lservice
+
+        :param name:          The name of the lservice
+        :type name:           string
+        :param lswitch_name:  The name of the lswitch the lservice is created on
+        :type lswitch_name:   string
+        :param may_exist:     Do not fail if lservice already exists
+        :type may_exist:      bool
+        :param columns:       Dictionary of service columns
+                              Supported columns: app_port, in_port, out_port
+        :type columns:        dictionary
+        :returns:             :class:`Command` with no result
+        """
+
+    @abc.abstractmethod
+    def set_lservice(self, lservice_name, if_exists=True, **columns):
+        """Create a command to set OVN lservice fields
+
+        :param lservice_name:    The name of the lservice
+        :type lservice_name:     string
+        :param columns:       Dictionary of service columns
+                              Supported columns: app_port, in_port, out_port
+        :param if_exists:     Do not fail if lservice does not exist
+        :type if_exists:      bool
+        :type columns:        dictionary
+        :returns:             :class:`Command` with no result
+        """
+
+    @abc.abstractmethod
+    def delete_lservice(self, name=None, lswitch=None, ext_id=None,
+                     if_exists=True):
+        """Create a command to delete an OVN lservice
+
+        :param name:      The name of the lservice
+        :type name:       string
+        :param lswitch:   The name of the lswitch
+        :type lswitch:    string
+        :param ext_id:    The external id of the lservice
+        :type ext_id:     pair of <ext_id_key ,ext_id_value>
+        :param if_exists: Do not fail if the lservice does not exists
+        :type if_exists:  bool
+        :returns:         :class:`Command` with no result
+        """
+
     @abc.abstractmethod
     def create_lport(self, name, lswitch_name, may_exist=True, **columns):
         """Create a command to add an OVN lport

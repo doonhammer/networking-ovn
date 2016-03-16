@@ -1318,8 +1318,7 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
                          network_id = s['network_id'],
                          in_port_id = s['in_port_id'],
                          out_port_id = s['out_port_id'],
-                         firewall_id = s['firewall_id'],
-                         application_id = s['application_id'])
+                         app_port_id = s['app_port_id'])
 
         with context.session.begin(subtransactions=True):
             # Ensure that the network exists.
@@ -1329,8 +1328,8 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
             db_sfi = models_v2.Sfi(**sfi_data)
             context.session.add(db_sfi)
 
-        return self._make_sfi_dict(sfi_data, process_extensions=False)
-
+        db_service = self._make_sfi_dict(sfi_data, process_extensions=False)
+        return self.create_service_in_ovn(context,db_sfi,sfi_data)
 
     def update_sfi(self,context,id, sfi):
         current_sfi = self._get_sfi(context,id)
@@ -1355,5 +1354,34 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
  
  
 
-    def delete_sfi(self,context, id):
+    def delete_sfi(self,context, sfi_id):
         LOG.info(_("delete sfi"))
+        service = self.get_sfi(context,sfi_id)
+
+        with self._ovn.transaction(check_error=True) as txn:
+                txn.add(self._ovn.delete_lservice(sfi_id,
+                        utils.ovn_name(service['network_id'])))
+
+    def create_service_in_ovn(self, context, service, ovn_service_info):
+        #
+        
+        external_ids = {ovn_const.OVN_SERVICE_NAME_EXT_ID_KEY: service['name']}
+        lswitch_name = utils.ovn_name(service['network_id'])
+        try:
+            lswitch = idlutils.row_by_value(self._ovn.idl, 'Logical_Switch',
+                                            'name', lswitch_name)
+        except idlutils.RowNotFound:
+            msg = _("Logical Switch %s does not exist") % lswitch_name
+            LOG.error(msg)
+            raise RuntimeError(msg)
+
+        with self._ovn.transaction(check_error=True) as txn:
+            txn.add(self._ovn.create_lservice(
+                    lservice_name=service['id'],
+                    lswitch_name=lswitch_name,
+                    name = ovn_service_info['name'],
+                    app_port = ovn_service_info['app_port_id'],
+                    in_port = ovn_service_info['in_port_id'],
+                    out_port = ovn_service_info['out_port_id'] ))
+
+        return service

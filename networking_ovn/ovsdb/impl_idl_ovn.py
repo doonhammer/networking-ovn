@@ -73,6 +73,24 @@ class OvsdbOvnIdl(ovn_api.API):
                                                ext_id[0], ext_id[1],
                                                if_exists)
 
+    def create_lservice(self, lservice_name, lswitch_name, may_exist=True,
+                     **columns):
+        return cmd.AddLogicalServiceCommand(self, lservice_name, lswitch_name,
+                                         may_exist, **columns)
+
+    def set_lservice(self, lservice_name, if_exists=True, **columns):
+        return cmd.SetLogicalServiceCommand(self, lservice_name,
+                                         if_exists, **columns)
+
+    def delete_lservice(self, lservice_name=None, lswitch=None,
+                     ext_id=None, if_exists=True):
+        if lservice_name is not None:
+            return cmd.DelLogicalServiceCommand(self, lservice_name,
+                                             lswitch, if_exists)
+        else:
+            raise RuntimeError(_("Currently only supports "
+                                 "delete by lservice-name"))
+
     def create_lport(self, lport_name, lswitch_name, may_exist=True,
                      **columns):
         return cmd.AddLogicalPortCommand(self, lport_name, lswitch_name,
