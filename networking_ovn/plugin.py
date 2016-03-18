@@ -1328,7 +1328,7 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
             db_sfi = models_v2.Sfi(**sfi_data)
             context.session.add(db_sfi)
 
-        db_service = self._make_sfi_dict(sfi_data, process_extensions=False)
+        # db_sfi = self._make_sfi_dict(sfi_data, process_extensions=False)
         return self.create_service_in_ovn(context,db_sfi,sfi_data)
 
     def update_sfi(self,context,id, sfi):
@@ -1377,8 +1377,8 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
 
         with self._ovn.transaction(check_error=True) as txn:
             txn.add(self._ovn.create_lservice(
-                    lservice_name=service['id'],
-                    lswitch_name=lswitch_name,
+                    lservice_name = 'sfi-%s' % service['id'],
+                    lswitch_name = lswitch_name,
                     name = ovn_service_info['name'],
                     app_port = ovn_service_info['app_port_id'],
                     in_port = ovn_service_info['in_port_id'],
