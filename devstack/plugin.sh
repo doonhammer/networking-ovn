@@ -40,7 +40,7 @@ set +o xtrace
 # --------
 
 # The git repo to use
-OVN_REPO=${OVN_REPO:-http://github.com/openvswitch/ovs.git}
+OVN_REPO=${OVN_REPO:-https://github.com/openvswitch/ovs.git}
 OVN_REPO_NAME=$(basename ${OVN_REPO} | cut -f1 -d'.')
 
 # The project directory
@@ -49,8 +49,11 @@ NETWORKING_OVN_DIR=$DEST/networking-ovn
 # The branch to use from $OVN_REPO
 OVN_BRANCH=${OVN_BRANCH:-origin/master}
 
-# How to connect to ovsdb-server hosting the OVN databases.
-OVN_REMOTE=${OVN_REMOTE:-tcp:$HOST_IP:6640}
+# How to connect to ovsdb-server hosting the OVN SB database.
+OVN_SB_REMOTE=${OVN_SB_REMOTE:-tcp:$HOST_IP:6642}
+
+# How to connect to ovsdb-server hosting the OVN NB database
+OVN_NB_REMOTE=${OVN_NB_REMOTE:-tcp:$HOST_IP:6641}
 
 # A UUID to uniquely identify this system.  If one is not specified, a random
 # one will be generated.  A randomly generated UUID will be saved in a file
@@ -69,6 +72,14 @@ OVN_BUILD_MODULES=$(trueorfalse True OVN_BUILD_MODULES)
 # to 1500 bytes.
 OVN_NATIVE_MTU=${OVN_NATIVE_MTU:-1500}
 
+# If using OVN_L3_MODE, this sets whether to create a public network and bridge.
+# If set to True, a public network and subnet(s) will be created, and a router
+# will be created to route the default private network to the public one.
+# Can only be set to True if OVN_L3_MODE is being used (and not q-l3) and
+# NEUTRON_CREATE_INITIAL_NETWORKS is True (the default).  There are known issues
+# setting this to true in a multinode devstack setup
+OVN_L3_CREATE_PUBLIC_NETWORK=$(trueorfalse False OVN_L3_CREATE_PUBLIC_NETWORK)
+
 # Neutron directory
 NEUTRON_DIR=$DEST/neutron
 
@@ -80,9 +91,13 @@ OVS_BRANCH=$OVN_BRANCH
 # Utility Functions
 # -----------------
 
-# There are some ovs functions OVN depends on that must be sourced from these
+# There are some ovs functions OVN depends on that must be sourced from
+# the ovs neutron plugins. After doing this, the OVN overrides must be
+# re-sourced.
 source $TOP_DIR/lib/neutron_plugins/ovs_base
 source $TOP_DIR/lib/neutron_plugins/openvswitch_agent
+source $NETWORKING_OVN_DIR/devstack/override-defaults
+source $NETWORKING_OVN_DIR/devstack/network_utils.sh
 
 function is_ovn_service_enabled {
     ovn_service=$1
@@ -123,11 +138,14 @@ function configure_ovn_plugin {
 
     if is_service_enabled q-svc ; then
         # NOTE(arosen) needed for tempest
-        export NETWORK_API_EXTENSIONS='binding,quotas,agent,dhcp_agent_scheduler,external-net,router'
+        export NETWORK_API_EXTENSIONS=$(python -c \
+            'from networking_ovn.common import extensions ;\
+             print ",".join(extensions.SUPPORTED_API_EXTENSIONS)')
+
 
         iniset $NEUTRON_CONF DEFAULT core_plugin "$Q_PLUGIN_CLASS"
         iniset $NEUTRON_CONF DEFAULT service_plugins "qos"
-        iniset $Q_PLUGIN_CONF_FILE ovn ovsdb_connection "$OVN_REMOTE"
+        iniset $Q_PLUGIN_CONF_FILE ovn ovsdb_connection "$OVN_NB_REMOTE"
         iniset $Q_PLUGIN_CONF_FILE ovn ovn_l3_mode "$OVN_L3_MODE"
     fi
 
@@ -146,7 +164,7 @@ function configure_ovn_plugin {
         # issues.
         #
         # Calculate MTU for self-service/private networks accounting for
-        # GENEVE overlay protocol overhead of 42 bytes and configure the
+        # GENEVE overlay protocol overhead of 58 bytes and configure the
         # DHCP agent to provide it to instances. Only effective on neutron
         # subnets with DHCP.
         #
@@ -156,7 +174,7 @@ function configure_ovn_plugin {
 
         iniset $Q_DHCP_CONF_FILE DEFAULT dnsmasq_config_file "/etc/neutron/dnsmasq.conf"
         if ! grep "dhcp-option=26" /etc/neutron/dnsmasq.conf ; then
-            echo "dhcp-option=26,$(($OVN_NATIVE_MTU - 42))" | sudo tee -a /etc/neutron/dnsmasq.conf
+            echo "dhcp-option=26,$(($OVN_NATIVE_MTU - 58))" | sudo tee -a /etc/neutron/dnsmasq.conf
         fi
     fi
 }
@@ -206,7 +224,7 @@ function install_ovn {
         install_neutron
     fi
 
-    setup_package $DEST/networking-ovn
+    setup_develop $DEST/networking-ovn
     # Install tox, used to generate the config (see devstack/override-defaults)
     pip_install tox
     source $NEUTRON_DIR/devstack/lib/ovs
@@ -223,13 +241,41 @@ function start_ovs {
     local ovsdb_logfile="ovsdb-server.log.${CURRENT_LOG_TIME}"
     bash -c "cd '$LOGDIR' && touch '$ovsdb_logfile' && ln -sf '$ovsdb_logfile' ovsdb-server.log"
 
+    local ovsdb_nb_logfile="ovsdb-server-nb.log.${CURRENT_LOG_TIME}"
+    bash -c "cd '$LOGDIR' && touch '$ovsdb_nb_logfile' && ln -sf '$ovsdb_nb_logfile' ovsdb-server-nb.log"
+
+    local ovsdb_sb_logfile="ovsdb-server-sb.log.${CURRENT_LOG_TIME}"
+    bash -c "cd '$LOGDIR' && touch '$ovsdb_sb_logfile' && ln -sf '$ovsdb_sb_logfile' ovsdb-server-sb.log"
+
     cd $DATA_DIR/ovs
 
     EXTRA_DBS=""
-    OVSDB_REMOTE=""
+    OVSDB_SB_REMOTE=""
     if is_ovn_service_enabled ovn-northd ; then
-        EXTRA_DBS="ovnsb.db ovnnb.db"
-        OVSDB_REMOTE="--remote=ptcp:6640:$HOST_IP"
+
+        # TODO (regXboi): change ovn-ctl so that we can use something
+        # other than --db-nb-port for port and ip address
+        DB_NB_PORT="6641"
+        DB_NB_FILE="$DATA_DIR/ovs/ovnnb.db"
+        OVN_NB_LOGFILE="$LOGDIR/ovsdb-server-nb.log"
+
+        # TODO (regXboi): change ovn-ctl so that we can use something
+        # other than --db-sb-port for port and ip address
+        DB_SB_PORT="6642"
+        DB_SB_FILE="$DATA_DIR/ovs/ovnsb.db"
+        OVN_SB_LOGFILE="$LOGDIR/ovsdb-server-sb.log"
+
+        /usr/local/share/openvswitch/scripts/ovn-ctl start_ovsdb \
+              --db-nb-port=$DB_NB_PORT --db-sb-port=$DB_SB_PORT \
+              --db-nb-file=$DB_NB_FILE --ovn-nb-logfile=$OVN_NB_LOGFILE \
+              --db-sb-file=$DB_SB_FILE --ovn-sb-logfile=$OVN_SB_LOGFILE
+
+        echo "Waiting for ovn ovsdb servers to start ... "
+        DB_NB_SOCK="/usr/local/var/run/openvswitch/ovnnb_db.sock"
+        DB_SB_SOCK="/usr/local/var/run/openvswitch/ovnsb_db.sock"
+        local testcmd="test -e $DB_NB_SOCK -a -e $DB_SB_SOCK"
+        test_with_retry "$testcmd" "nb ovsdb-server did not start" $SERVICE_TIMEOUT 1
+        echo "done."
     fi
 
     # TODO (regXboi): it would be nice to run the following with run_process
@@ -240,17 +286,16 @@ function start_ovs {
     # rather broken.  So, stay with this for now and somebody more tenacious
     # than I can figure out how to make it work...
 
-    if is_ovn_service_enabled ovn-northd || is_ovn_service_enabled ovn-controller; then
+    if is_ovn_service_enabled ovn-controller; then
         ovsdb-server --remote=punix:/usr/local/var/run/openvswitch/db.sock \
                      --remote=db:Open_vSwitch,Open_vSwitch,manager_options \
                      --pidfile --detach -vconsole:off \
-                     --log-file=$LOGDIR/ovsdb-server.log $OVSDB_REMOTE \
-                     conf.db ${EXTRA_DBS}
+                     --log-file=$LOGDIR/ovsdb-server.log \
+                     conf.db
 
         echo -n "Waiting for ovsdb-server to start ... "
-        while ! test -e /usr/local/var/run/openvswitch/db.sock ; do
-            sleep 1
-        done
+        local testcmd="test -e /usr/local/var/run/openvswitch/db.sock"
+        test_with_retry "$testcmd" "ovsdb-server did not start" $SERVICE_TIMEOUT 1
         echo "done."
         ovs-vsctl --no-wait init
         ovs-vsctl --no-wait set open_vswitch . system-type="devstack"
@@ -258,24 +303,24 @@ function start_ovs {
     fi
 
     if is_ovn_service_enabled ovn-controller ; then
-        ovs-vsctl --no-wait set open_vswitch . external-ids:ovn-remote="$OVN_REMOTE"
+        ovs-vsctl --no-wait set open_vswitch . external-ids:ovn-remote="$OVN_SB_REMOTE"
         ovs-vsctl --no-wait set open_vswitch . external-ids:ovn-bridge="br-int"
         ovs-vsctl --no-wait set open_vswitch . external-ids:ovn-encap-type="geneve"
         ovs-vsctl --no-wait set open_vswitch . external-ids:ovn-encap-ip="$HOST_IP"
 
         _neutron_ovs_base_setup_bridge br-int
         ovs-vsctl --no-wait set bridge br-int fail-mode=secure other-config:disable-in-band=true
-	#
-	# Create firewall bridge
-	#
-        _neutron_ovs_base_setup_bridge br-fw
-        ovs-vsctl --no-wait set bridge br-fw fail-mode=secure other-config:disable-in-band=true
 
         local ovswd_logfile="ovs-switchd.log.${CURRENT_LOG_TIME}"
         bash -c "cd '$LOGDIR' && touch '$ovswd_logfile' && ln -sf '$ovswd_logfile' ovs-vswitchd.log"
 
         # Bump up the max number of open files ovs-vswitchd can have
         sudo sh -c "ulimit -n 32000 && exec ovs-vswitchd --pidfile --detach -vconsole:off --log-file=$LOGDIR/ovs-vswitchd.log"
+
+        if is_provider_network; then
+            _neutron_ovs_base_setup_bridge $OVS_PHYSICAL_BRIDGE
+            ovs-vsctl set open . external-ids:ovn-bridge-mappings=${PHYSICAL_NETWORK}:${OVS_PHYSICAL_BRIDGE}
+        fi
     fi
 
     cd $_pwd
@@ -294,25 +339,24 @@ function start_ovn {
         # the millisecond, but we need to make sure ovs-appctl has
         # a pid file to work with, so ...
         echo -n "Waiting for ovn-controller to start ... "
-        while ! test -e /usr/local/var/run/openvswitch/ovn-controller.pid ; do
-            sleep 1
-        done
+        local testcmd="test -e /usr/local/var/run/openvswitch/ovn-controller.pid"
+        test_with_retry "$testcmd" "ovn-controller did not start" $SERVICE_TIMEOUT 1
         echo "done."
         sudo ovs-appctl -t ovn-controller vlog/set "PATTERN:CONSOLE:%D{%Y-%m-%dT%H:%M:%S.###Z}|%05N|%c%T|%p|%m"
     fi
 
     if is_ovn_service_enabled ovn-northd ; then
-        # TODO (regXboi) ovn-northd doesn't appear to log to console at
-        # all - revisit this after that is fixed
-        run_process ovn-northd "ovn-northd --pidfile --log-file=$LOGDIR/ovn-northd.log"
+
+
+        run_process ovn-northd "ovn-northd --log-file=$LOGDIR/ovn-northd.log --pidfile"
 
         # This makes sure that the console logs have time stamps to
         # the millisecond, but we need to make sure ovs-appctl has
         # a pid file to work with, so ...
         echo -n "Waiting for ovn-northd to start ... "
-        while ! test -e /usr/local/var/run/openvswitch/ovn-northd.pid ; do
-            sleep 1
-        done
+        OVN_NORTHD_PID="/usr/local/var/run/openvswitch/ovn-northd.pid"
+        local testcmd="test -e $OVN_NORTH_PID"
+        test_with_retry "$testcmd" "ovn-northd did not start" $SERVICE_TIMEOUT 1
         echo "done."
         sudo ovs-appctl -t ovn-northd vlog/set "PATTERN:CONSOLE:%D{%Y-%m-%dT%H:%M:%S.###Z}|%05N|%c%T|%p|%m"
     fi
@@ -325,7 +369,7 @@ function stop_ovn {
         sudo killall ovs-vswitchd
     fi
     if is_ovn_service_enabled ovn-northd ; then
-        stop_process ovn-northd
+        /usr/local/share/openvswitch/scripts/ovn-ctl stop_northd
     fi
     sudo killall ovsdb-server
 }
@@ -349,12 +393,33 @@ function disable_libvirt_apparmor {
     sudo aa-complain /etc/apparmor.d/usr.sbin.libvirtd
 }
 
+function create_public_bridge {
+    # Create the public bridge that OVN will use
+    # This logic is based on the devstack neutron-legacy _neutron_configure_router_v4 and _v6
+    local ext_gw_ifc
+    ext_gw_ifc=$(get_ext_gw_interface)
+
+    sudo ovs-vsctl --may-exist add-br $ext_gw_ifc -- set bridge $ext_gw_ifc protocols=OpenFlow13
+    sudo ovs-vsctl set open . external-ids:ovn-bridge-mappings=provider:$ext_gw_ifc
+    if [ -n "$FLOATING_RANGE" ]; then
+        local cidr_len=${FLOATING_RANGE#*/}
+        sudo ip addr add $PUBLIC_NETWORK_GATEWAY/$cidr_len dev $ext_gw_ifc
+    fi
+
+    sudo sysctl -w net.ipv6.conf.all.forwarding=1
+    if [ -n "$IPV6_PUBLIC_RANGE" ]; then
+        local ipv6_cidr_len=${IPV6_PUBLIC_RANGE#*/}
+        sudo ip -6 addr add $IPV6_PUBLIC_NETWORK_GATEWAY/$ipv6_cidr_len dev $ext_gw_ifc
+        sudo ip -6 route replace $FIXED_RANGE_V6 via $IPV6_PUBLIC_NETWORK_GATEWAY dev $ext_gw_ifc
+    fi
+
+    sudo ip link set $ext_gw_ifc up
+}
+
 # main loop
 if is_service_enabled q-svc || is_ovn_service_enabled ovn-northd || is_ovn_service_enabled ovn-controller; then
     if [[ "$1" == "stack" && "$2" == "install" ]]; then
-        if [[ "$OFFLINE" != "True" ]]; then
-            install_ovn
-        fi
+        install_ovn
         configure_ovn
         init_ovn
         # We have to start at install time, because Neutron's post-config
@@ -372,8 +437,19 @@ if is_service_enabled q-svc || is_ovn_service_enabled ovn-northd || is_ovn_servi
 
         # If not previously set by another process, set the OVN_*_DB
         # variables to enable OVN commands from any node.
-        grep -lq 'OVN' ~/.bash_profile || echo -e "\n# Enable OVN commands from any node.\nexport OVN_NB_DB=$OVN_REMOTE\nexport OVN_SB_DB=$OVN_REMOTE" >> ~/.bash_profile
+        grep -lq 'OVN' ~/.bash_profile || echo -e "\n# Enable OVN commands from any node.\nexport OVN_NB_DB=$OVN_NB_REMOTE\nexport OVN_SB_DB=$OVN_SB_REMOTE" >> ~/.bash_profile
 
+    elif [[ "$1" == "stack" && "$2" == "extra" ]]; then
+        if [[ "$OVN_L3_CREATE_PUBLIC_NETWORK" == "True" ]]; then
+            if [[ "$NEUTRON_CREATE_INITIAL_NETWORKS" != "True" || "$OVN_L3_MODE" != "True" ]]; then
+                echo "OVN_L3_CREATE_PUBLIC_NETWORK=True is being ignored because either"
+                echo "NEUTRON_CREATE_INITIAL_NETWORKS or OVN_L3_MODE is set to False"
+            else
+                add_net_subnet_router
+                create_public_bridge
+                add_public_network_id_to_tempest_conf
+            fi
+        fi
     fi
 
     if [[ "$1" == "unstack" ]]; then

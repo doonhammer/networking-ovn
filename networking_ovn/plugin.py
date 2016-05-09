@@ -1,4 +1,3 @@
-
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -15,15 +14,13 @@
 import collections
 
 import netaddr
-import six
 
+from neutron_lib import constants as const
 from oslo_config import cfg
 from oslo_log import log
 from oslo_utils import importutils
 from sqlalchemy.orm import exc as sa_exc
-from oslo_utils import uuidutils
 
-from neutron.agent.ovsdb.native import idlutils
 from neutron.api.rpc.agentnotifiers import dhcp_rpc_agent_api
 from neutron.api.rpc.agentnotifiers import l3_rpc_agent_api
 from neutron.api.rpc.callbacks.consumer import registry as callbacks_registry
@@ -37,29 +34,36 @@ from neutron.api.v2 import attributes as attr
 from neutron.callbacks import events
 from neutron.callbacks import registry
 from neutron.callbacks import resources
-from neutron.common import constants as const
 from neutron.common import exceptions as n_exc
 from neutron.common import rpc as n_rpc
 from neutron.common import topics
 from neutron import context as n_context
 from neutron.core_extensions import base as base_core
 from neutron.core_extensions import qos as qos_core
+from neutron.db import address_scope_db
 from neutron.db import agents_db
 from neutron.db import agentschedulers_db
+from neutron.db import allowedaddresspairs_db as addr_pair_db
 from neutron.db import api as db_api
 from neutron.db import db_base_plugin_v2
 from neutron.db import external_net_db
 from neutron.db import extradhcpopt_db
 from neutron.db import extraroute_db
-from neutron.db import l3_agentschedulers_db
+from neutron.db import l3_db
 from neutron.db import l3_gwmode_db
+from neutron.db import l3_hamode_db
+from neutron.db import l3_hascheduler_db
 from neutron.db import models_v2
 from neutron.db import netmtu_db
 from neutron.db import portbindings_db
+from neutron.db import portsecurity_db_common as ps_db_common
 from neutron.db import securitygroups_db
+from neutron.db import segments_db
+from neutron.extensions import allowedaddresspairs as addr_pair
 from neutron.extensions import availability_zone as az_ext
 from neutron.extensions import extra_dhcp_opt as edo_ext
 from neutron.extensions import portbindings
+from neutron.extensions import portsecurity as psec
 from neutron.extensions import providernet as pnet
 from neutron.objects.qos import policy as qos_policy
 from neutron.objects.qos import rule as qos_rule
@@ -68,11 +72,11 @@ from neutron.services.qos import qos_consts
 from networking_ovn._i18n import _, _LE, _LI, _LW
 from networking_ovn.common import config
 from networking_ovn.common import constants as ovn_const
+from networking_ovn.common import extensions
 from networking_ovn.common import utils
 from networking_ovn import ovn_nb_sync
 from networking_ovn.ovsdb import impl_idl_ovn
 from networking_ovn.ovsdb import ovsdb_monitor
-from networking_ovn.extensions import sfis
 
 LOG = log.getLogger(__name__)
 
@@ -84,34 +88,24 @@ OvnPortInfo = collections.namedtuple('OvnPortInfo', ['type', 'options',
 
 class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
                 securitygroups_db.SecurityGroupDbMixin,
-                l3_agentschedulers_db.L3AgentSchedulerDbMixin,
+                l3_hamode_db.L3_HA_NAT_db_mixin,
+                l3_hascheduler_db.L3_HA_scheduler_db_mixin,
                 l3_gwmode_db.L3_NAT_db_mixin,
                 external_net_db.External_net_db_mixin,
                 portbindings_db.PortBindingMixin,
                 extradhcpopt_db.ExtraDhcpOptMixin,
                 extraroute_db.ExtraRoute_db_mixin,
                 agentschedulers_db.AZDhcpAgentSchedulerDbMixin,
-                netmtu_db.Netmtu_db_mixin):
+                netmtu_db.Netmtu_db_mixin,
+                ps_db_common.PortSecurityDbCommon,
+                addr_pair_db.AllowedAddressPairsMixin,
+                address_scope_db.AddressScopeDbMixin):
 
     __native_bulk_support = True
     __native_pagination_support = True
     __native_sorting_support = True
 
-    supported_extension_aliases = ["quotas",
-                                   "extra_dhcp_opt",
-                                   "binding",
-                                   "agent",
-                                   "dhcp_agent_scheduler",
-                                   "security-group",
-                                   "extraroute",
-                                   "external-net",
-                                   "router",
-                                   "provider",
-                                   "subnet_allocation",
-                                   "availability_zone",
-                                   "network_availability_zone",
-                                   "net-mtu",
-                                   "sfi"]
+    supported_extension_aliases = extensions.SUPPORTED_API_EXTENSIONS
     supported_qos_rule_types = [qos_consts.RULE_TYPE_BANDWIDTH_LIMIT]
 
     def __init__(self):
@@ -140,9 +134,9 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
             }
         else:
             if config.get_ovn_vif_type() != portbindings.VIF_TYPE_OVS:
-                LOG.warn(_LW('VIF type should be one of %(ovs)s, %(vhu)s') % {
-                    "vhu": portbindings.VIF_TYPE_VHOST_USER,
-                    "ovs": portbindings.VIF_TYPE_OVS})
+                LOG.warning(_LW('VIF type should be one of %(ovs)s, %(vhu)s') %
+                            {"vhu": portbindings.VIF_TYPE_VHOST_USER,
+                             "ovs": portbindings.VIF_TYPE_OVS})
             self.base_binding_dict = {
                 portbindings.VIF_TYPE: portbindings.VIF_TYPE_OVS,
                 portbindings.VIF_DETAILS: {
@@ -172,6 +166,10 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
             # - Ovn worker seems to be the right candidate.
             self.start_periodic_dhcp_agent_status_check()
 
+            # start periodic check task for L3 agent
+            if not config.is_ovn_l3():
+                self.start_periodic_l3_agent_status_check()
+
     def _setup_rpc(self):
         self.endpoints = [dhcp_rpc.DhcpRpcCallback(),
                           agents_db.AgentExtRpcCallback(),
@@ -191,6 +189,9 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
             dhcp_rpc_agent_api.DhcpAgentNotifyAPI()
         )
         if not config.is_ovn_l3():
+            self.router_scheduler = importutils.import_object(
+                cfg.CONF.router_scheduler_driver)
+            l3_db.subscribe()
             self.agent_notifiers[const.AGENT_TYPE_L3] = (
                 l3_rpc_agent_api.L3AgentNotifyAPI()
             )
@@ -205,10 +206,11 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
 
         # topics.REPORTS was added for the Mitaka release, therefore, to
         # work with stable/liberty, check to see if topics.REPORTS exists
-        # if it does, use it. If not, use topics.PLUGIN instead
-        topic = topics.REPORTS if hasattr(topics, 'REPORTS') else topics.PLUGIN
-        self.conn.create_consumer(topic, [agents_db.AgentExtRpcCallback()],
-                                  fanout=False)
+        # if it does, use it.
+        if hasattr(topics, 'REPORTS'):
+            self.conn.create_consumer(
+                topics.REPORTS, [agents_db.AgentExtRpcCallback()],
+                fanout=False)
         qos_topic = resources_rpc.resource_type_versioned_topic(
             callbacks_resources.QOS_POLICY)
         self.conn.create_consumer(
@@ -221,29 +223,22 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
             if hasattr(qos_policy, "rules"):
                 # rules updated
                 context = n_context.get_admin_context()
-                network_bindings = self._model_query(
-                    context,
-                    qos_policy.network_binding_model).filter(
-                    qos_policy.network_binding_model.policy_id ==
-                    qos_policy.id)
+                network_bindings = qos_policy.get_bound_networks()
                 for binding in network_bindings:
                     self._update_network_qos(
                         context, binding.network_id, qos_policy.id)
 
-                port_bindings = self._model_query(
-                    context,
-                    qos_policy.port_binding_model).filter(
-                    qos_policy.port_binding_model.policy_id == qos_policy.id)
+                port_bindings = qos_policy.get_bound_ports()
                 for binding in port_bindings:
                     port = self.get_port(context, binding.port_id)
-                    qos_options = self._qos_get_ovn_port_options(
+                    qos_options = self.qos_get_ovn_port_options(
                         context, port)
 
-                    binding_profile = self._get_data_from_binding_profile(
+                    binding_profile = self.get_data_from_binding_profile(
                         context, port)
-                    ovn_port_info = self._get_ovn_port_options(binding_profile,
-                                                               qos_options,
-                                                               port)
+                    ovn_port_info = self.get_ovn_port_options(binding_profile,
+                                                              qos_options,
+                                                              port)
                     self._update_port_in_ovn(context, port,
                                              port, ovn_port_info)
 
@@ -253,10 +248,42 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
             res = None
         return res
 
+    def _extend_network_dict_provider(self, context, network):
+        """Extend network dict with provider network attributes"""
+        segments = segments_db.get_network_segments(
+            context.session, network['id'])
+        if segments:
+            # OVN plugin creates segments for provider networks only
+            segment = segments[0]
+            network[pnet.NETWORK_TYPE] = segment[segments_db.NETWORK_TYPE]
+            network[pnet.PHYSICAL_NETWORK] = segment[
+                segments_db.PHYSICAL_NETWORK]
+            network[pnet.SEGMENTATION_ID] = segment[
+                segments_db.SEGMENTATION_ID]
+
+    def get_network(self, context, id, fields=None):
+        result = super(OVNPlugin, self).get_network(context, id, None)
+        self._extend_network_dict_provider(context, result)
+        return self._fields(result, fields)
+
+    def get_networks(self, context, filters=None, fields=None,
+                     sorts=None, limit=None, marker=None,
+                     page_reverse=False):
+        with context.session.begin(subtransactions=True):
+            nets = super(OVNPlugin, self).get_networks(
+                context, filters, None, sorts, limit, marker, page_reverse)
+            for net in nets:
+                self._extend_network_dict_provider(context, net)
+
+        return (nets if not fields else
+                [self._fields(net, fields) for net in nets])
+
     def create_network(self, context, network):
         net = network['network']  # obviously..
         ext_ids = {}
         physnet = self._get_attribute(net, pnet.PHYSICAL_NETWORK)
+        segid = None
+        nettype = None
         if physnet:
             # If this is a provider network, validate that it's a type we
             # support. (flat or vlan)
@@ -266,30 +293,26 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
                         'networks (only flat or vlan).') % nettype
                 raise n_exc.InvalidInput(error_message=msg)
 
-            # NOTE(russellb) This is the provider network case.  We stash the
-            # provider networks fields on OVN Logical Switch.  This logical
-            # switch isn't actually used for anything else because a special
-            # switch is created for every port attached to the provider
-            # network.  The reason we stash them is because these fields are
-            # not actually stored in the Neutron database anywhere. :-(
-            # They are stored in an ML2 specific db table by the ML2 plugin,
-            # but there's no common code and table for other plugins.  Stashing
-            # them here is the easy solution for now, but a common Neutron db
-            # table and YAM (yet another mixin) would be better eventually.
             segid = self._get_attribute(net, pnet.SEGMENTATION_ID)
-            ext_ids.update({
-                ovn_const.OVN_PHYSNET_EXT_ID_KEY: physnet,
-                ovn_const.OVN_NETTYPE_EXT_ID_KEY: nettype,
-            })
-            if segid:
-                ext_ids.update({
-                    ovn_const.OVN_SEGID_EXT_ID_KEY: str(segid),
-                })
 
         with context.session.begin(subtransactions=True):
             result = super(OVNPlugin, self).create_network(context,
                                                            network)
+            if psec.PORTSECURITY not in net:
+                net[psec.PORTSECURITY] = (
+                    psec.EXTENDED_ATTRIBUTES_2_0['networks']
+                    [psec.PORTSECURITY]['default'])
+            self._process_network_port_security_create(context, net, result)
             self._process_l3_create(context, result, net)
+
+            if physnet:
+                segment = {segments_db.NETWORK_TYPE: nettype,
+                           segments_db.PHYSICAL_NETWORK: physnet,
+                           segments_db.SEGMENTATION_ID: segid}
+                segments_db.add_network_segment(
+                    context.session, result['id'], segment)
+                self._extend_network_dict_provider(context, result)
+
             self.core_ext_handler.process_fields(
                 context, base_core.NETWORK, net, result)
             if az_ext.AZ_HINTS in net:
@@ -307,16 +330,18 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
         # for the extension functions.
         net_model = self._get_network(context, result['id'])
         self._apply_dict_extend_functions('networks', result, net_model)
-
         try:
-            return self.create_network_in_ovn(result, ext_ids)
+            return self.create_network_in_ovn(result, ext_ids,
+                                              physnet, segid)
+
         except Exception:
             LOG.exception(_LE('Unable to create lswitch for %s'),
                           result['id'])
             self.delete_network(context, result['id'])
             raise n_exc.ServiceUnavailable()
 
-    def create_network_in_ovn(self, network, ext_ids):
+    def create_network_in_ovn(self, network, ext_ids,
+                              physnet=None, segid=None):
         # Create a logical switch with a name equal to the Neutron network
         # UUID.  This provides an easy way to refer to the logical switch
         # without having to track what UUID OVN assigned to it.
@@ -324,9 +349,23 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
             ovn_const.OVN_NETWORK_NAME_EXT_ID_KEY: network['name']
         })
 
-        self._ovn.create_lswitch(lswitch_name=utils.ovn_name(network['id']),
-                                 external_ids=ext_ids).execute(
-                                     check_error=True)
+        lswitch_name = utils.ovn_name(network['id'])
+        with self._ovn.transaction(check_error=True) as txn:
+            txn.add(self._ovn.create_lswitch(
+                lswitch_name=lswitch_name,
+                external_ids=ext_ids))
+            if physnet:
+                vlan_id = None
+                if segid is not None:
+                    vlan_id = int(segid)
+                txn.add(self._ovn.create_lport(
+                    lport_name='provnet-%s' % network['id'],
+                    lswitch_name=lswitch_name,
+                    addresses=['unknown'],
+                    external_ids=None,
+                    type='localnet',
+                    tag=vlan_id,
+                    options={'network_name': physnet}))
         return network
 
     def delete_network(self, context, network_id):
@@ -442,8 +481,11 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
         with context.session.begin(subtransactions=True):
             updated_network = super(OVNPlugin, self).update_network(
                 context, network_id, network)
+            self._extend_network_dict_provider(context, updated_network)
             self._process_l3_update(
                 context, updated_network, network['network'])
+            self._process_network_port_security_update(
+                context, network['network'], updated_network)
             if 'qos_policy_id' in net_dict:
                 self.core_ext_handler.process_fields(
                     context, base_core.NETWORK, net_dict, updated_network)
@@ -454,7 +496,7 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
 
         return updated_network
 
-    def _qos_get_ovn_port_options(self, context, port):
+    def qos_get_ovn_port_options(self, context, port):
         port_policy_id = port.get("qos_policy_id", None)
         nw_policy = qos_policy.QosPolicy.get_network_policy(
             context, port['network_id'])
@@ -498,9 +540,37 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
             binding_profile = self.get_data_from_binding_profile(
                 context, pdict)
 
-            original_port = self.get_port(context, id)
+            try:
+                original_port = self.get_port(context, id)
+            except n_exc.PortNotFound:
+                if port == {'port': {'id': id}}:
+                    # There is a race condition in create_subnet for
+                    # ipv6 auto address subnets. When
+                    # NeutronDbPluginV2._create_subnet tries to update the
+                    # internal ports of the network and if any of the internal
+                    # port is deleted by another worker, subnet creation
+                    # fails. This is seen for the
+                    # tempest.api.network.test_dhcp_ipv6.NetworksTestDHCPv6.*
+                    # tests in the CI.
+                    # This is a workaround until its fixed in the neutron.
+                    # Since NeutronDbPluginV2._create_subnet calls port_update
+                    # with port_info dict as {'port': {'id': id}}, we can
+                    # ignore this error.
+                    # Returning None as NeutronDbPluginV2._create_subnet
+                    # doesn't check for the return value.
+                    LOG.debug('Ignoring PortNotFound exception for port %s',
+                              ' as update_port is called by create_subnet',
+                              id)
+                    return
+                raise
+
             updated_port = super(OVNPlugin, self).update_port(context, id,
                                                               port)
+            self._process_port_port_security_update(context, port['port'],
+                                                    updated_port)
+
+            self._portsec_ext_port_update_processing(updated_port, context,
+                                                     port)
 
             self._process_portbindings_create_and_update(context,
                                                          pdict,
@@ -508,11 +578,16 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
             self.update_security_group_on_port(
                 context, id, port, original_port, updated_port)
 
+            if addr_pair.ADDRESS_PAIRS in port['port']:
+                self.update_address_pairs_on_port(context, id, port,
+                                                  original_port,
+                                                  updated_port)
+
             self._update_extra_dhcp_opts_on_port(context, id, port,
                                                  updated_port=updated_port)
             self.core_ext_handler.process_fields(
                 context, base_core.PORT, pdict, updated_port)
-            qos_options = self._qos_get_ovn_port_options(
+            qos_options = self.qos_get_ovn_port_options(
                 context, updated_port)
 
         ovn_port_info = self.get_ovn_port_options(binding_profile,
@@ -520,6 +595,58 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
                                                   updated_port)
         return self._update_port_in_ovn(context, original_port,
                                         updated_port, ovn_port_info)
+
+    def _portsec_ext_port_create_processing(self, context, port_data, port):
+        # This function  is borrowed from ml2 plugin
+        port_security = ((port_data.get(psec.PORTSECURITY) is None) or
+                         port_data[psec.PORTSECURITY])
+
+        # allowed address pair checks
+        if self._check_update_has_allowed_address_pairs(port):
+            if not port_security:
+                raise addr_pair.AddressPairAndPortSecurityRequired()
+        else:
+            # remove ATTR_NOT_SPECIFIED
+            port['port'][addr_pair.ADDRESS_PAIRS] = []
+
+        if port_security:
+            self._ensure_default_security_group_on_port(context, port)
+        elif self._check_update_has_security_groups(port):
+            raise psec.PortSecurityAndIPRequiredForSecurityGroups()
+
+    def _portsec_ext_port_update_processing(self, updated_port, context, port):
+        # This function  is borrowed from ml2 plugin
+        port_security = ((updated_port.get(psec.PORTSECURITY) is None) or
+                         updated_port[psec.PORTSECURITY])
+
+        if port_security:
+            return
+
+        # check the address-pairs
+        if self._check_update_has_allowed_address_pairs(port):
+            #  has address pairs in request
+            raise addr_pair.AddressPairAndPortSecurityRequired()
+        elif (not self._check_update_deletes_allowed_address_pairs(port)):
+            # not a request for deleting the address-pairs
+            updated_port[addr_pair.ADDRESS_PAIRS] = (
+                self.get_allowed_address_pairs(context, updated_port['id']))
+
+            if updated_port[addr_pair.ADDRESS_PAIRS]:
+                raise addr_pair.AddressPairAndPortSecurityRequired()
+
+        # checks if security groups were updated adding/modifying
+        # security groups, port security is set
+        if self._check_update_has_security_groups(port):
+            raise psec.PortSecurityAndIPRequiredForSecurityGroups()
+        elif (not self._check_update_deletes_security_groups(port)):
+            # Update did not have security groups passed in. Check
+            # that port does not have any security groups already on it.
+            filters = {'port_id': [updated_port['id']]}
+            security_groups = self._get_port_security_group_bindings(
+                context, filters)
+
+            if security_groups:
+                raise psec.PortSecurityPortHasSecurityGroup()
 
     def _update_port_in_ovn(self, context, original_port, port,
                             ovn_port_info):
@@ -542,15 +669,24 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
                     port['id']))
             sg_ports_cache = {}
             subnet_cache = {}
-            self._add_acls(context, port, txn,
-                           sg_ports_cache=sg_ports_cache,
-                           subnet_cache=subnet_cache)
+            acls_new = self._add_acls(context, port,
+                                      sg_ports_cache=sg_ports_cache,
+                                      subnet_cache=subnet_cache)
+            for acl in acls_new:
+                txn.add(self._ovn.add_acl(**acl))
 
         # Refresh remote security groups for changed security groups
         old_sg_ids = set(original_port.get('security_groups', []))
         new_sg_ids = set(port.get('security_groups', []))
         detached_sg_ids = old_sg_ids - new_sg_ids
         attached_sg_ids = new_sg_ids - old_sg_ids
+
+        if (len(port.get('fixed_ips')) == 0 and
+                len(original_port.get('fixed_ips')) == 0):
+            # No need to process remote security group if the port
+            # didn't have any IP Addresses.
+            return port
+
         for sg_id in (attached_sg_ids | detached_sg_ids):
             self._refresh_remote_security_group(
                 context, sg_id,
@@ -607,7 +743,7 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
                 continue
             param_value = param_dict[param_key]
             if not isinstance(param_value, param_type):
-                msg = _('Invalid binding:profile. %(key)s %(value)s'
+                msg = _('Invalid binding:profile. %(key)s %(value)s '
                         'value invalid type') % {'key': param_key,
                                                  'value': param_value}
                 raise n_exc.InvalidInput(error_message=msg)
@@ -627,13 +763,29 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
 
         return param_dict
 
-    def _get_allowed_mac_addresses_from_port(self, port):
-        allowed_macs = set()
-        allowed_macs.add(port['mac_address'])
-        allowed_address_pairs = port.get('allowed_address_pairs', [])
-        for allowed_address in allowed_address_pairs:
-            allowed_macs.add(allowed_address['mac_address'])
-        return list(allowed_macs)
+    def _get_allowed_addresses_from_port(self, port):
+        if not port.get(psec.PORTSECURITY):
+            return []
+
+        allowed_addresses = set()
+        addresses = port['mac_address']
+        for ip in port.get('fixed_ips', []):
+            addresses += ' ' + ip['ip_address']
+
+        for allowed_address in port.get('allowed_address_pairs', []):
+            # If allowed address pair has same mac as the port mac,
+            # append the allowed ip address to the 'addresses'.
+            # Else we will have multiple entries for the same mac in
+            # 'Logical_Port.port_security'.
+            if allowed_address['mac_address'] == port['mac_address']:
+                addresses += ' ' + allowed_address['ip_address']
+            else:
+                allowed_addresses.add(allowed_address['mac_address'] + ' ' +
+                                      allowed_address['ip_address'])
+
+        allowed_addresses.add(addresses)
+
+        return list(allowed_addresses)
 
     def _update_port_binding(self, port_res):
         port_res[portbindings.VNIC_TYPE] = portbindings.VNIC_NORMAL
@@ -656,6 +808,11 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
             db_port = super(OVNPlugin, self).create_port(context, port)
             self.core_ext_handler.process_fields(
                 context, base_core.PORT, pdict, db_port)
+            port['port'][psec.PORTSECURITY] = self._determine_port_security(
+                context, port['port'])
+            self._process_port_port_security_create(context, port['port'],
+                                                    db_port)
+            self._portsec_ext_port_create_processing(context, db_port, port)
             sgids = self._get_security_groups_on_port(context, port)
             self._process_port_create_security_group(context, db_port,
                                                      sgids)
@@ -672,9 +829,13 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
                 db_port[ovn_const.OVN_PORT_BINDING_PROFILE] = \
                     pdict[ovn_const.OVN_PORT_BINDING_PROFILE]
 
+            db_port[addr_pair.ADDRESS_PAIRS] = (
+                self._process_create_allowed_address_pairs(
+                    context, db_port,
+                    port['port'].get(addr_pair.ADDRESS_PAIRS)))
             self._process_port_create_extra_dhcp_opts(context, db_port,
                                                       dhcp_opts)
-            qos_options = self._qos_get_ovn_port_options(
+            qos_options = self.qos_get_ovn_port_options(
                 context, db_port)
 
         # This extra lookup is necessary to get the latest db model
@@ -693,29 +854,51 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
         tag = None
         port_type = None
         options = None
-        LOG.info("In get_ovn_port_info: %s",port)
+
         if vtep_physical_switch:
             vtep_logical_switch = binding_profile.get('vtep_logical_switch')
             port_type = 'vtep'
             options = {'vtep_physical_switch': vtep_physical_switch,
                        'vtep_logical_switch': vtep_logical_switch}
-            addresses = ["unknown"]
-            allowed_macs = []
+            addresses = "unknown"
+            port_security = []
         else:
             options = qos_options
             parent_name = binding_profile.get('parent_name')
             tag = binding_profile.get('tag')
-            fixed_ips = port.get('fixed_ips')
-            LOG.info("Fixed IP's in get_ovn_port_info: %s",fixed_ips)
-            if fixed_ips:
-                addresses = [port['mac_address'] + ' ' + ip['ip_address'] for
-                             ip in fixed_ips]
-            else:
-                addresses = [port['mac_address']]
-            allowed_macs = self._get_allowed_mac_addresses_from_port(port)
+            addresses = port['mac_address']
+            for ip in port.get('fixed_ips', []):
+                addresses += ' ' + ip['ip_address']
+            port_security = self._get_allowed_addresses_from_port(port)
 
-        return OvnPortInfo(port_type, options, addresses, allowed_macs,
+        return OvnPortInfo(port_type, options, [addresses], port_security,
                            parent_name, tag)
+
+    def _determine_port_security(self, context, port):
+        """Returns a boolean (port_security_enabled).
+
+        This function is borrowed from ml2 port security extension driver.
+        Port_security is the value associated with the port if one is present
+        otherwise the value associated with the network is returned.
+        """
+        # we don't apply port security for dhcp, router
+        if port.get('device_owner') and port['device_owner'].startswith(
+            const.DEVICE_OWNER_NETWORK_PREFIX):
+            return False
+
+        if attr.is_attr_set(port.get(psec.PORTSECURITY)):
+            port_security_enabled = port[psec.PORTSECURITY]
+        else:
+            try:
+                port_security_enabled = self._get_network_security_binding(
+                    context, port['network_id'])
+            except psec.PortSecurityBindingNotFound:
+                # If Network security binding doesn't exist return True.
+                # This could happen for networks created prior to port
+                # security extension support in the plugin.
+                port_security_enabled = True
+
+        return port_security_enabled
 
     def _acl_direction(self, r, port):
         if r['direction'] == 'ingress':
@@ -824,12 +1007,15 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
             match += ' && %s' % protocol
             # If min or max are set to -1, then we just treat it like it wasn't
             # specified at all and don't match on it.
-            if r['port_range_min'] and r['port_range_min'] != -1:
-                match += ' && %s >= %d' % (port_match,
-                                           r['port_range_min'])
-            if r['port_range_max'] and r['port_range_max'] != -1:
-                match += ' && %s <= %d' % (port_match,
-                                           r['port_range_max'])
+            min_port = r['port_range_min']
+            max_port = r['port_range_max']
+            if (min_port and min_port == max_port and min_port != -1):
+                match += ' && %s == %d' % (port_match, min_port)
+            else:
+                if min_port and min_port != -1:
+                    match += ' && %s >= %d' % (port_match, min_port)
+                if max_port and max_port != -1:
+                    match += ' && %s <= %d' % (port_match, max_port)
         return match
 
     def _add_sg_rule_acl_for_port(self, context, port, r, sg_ports_cache,
@@ -867,29 +1053,17 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
             'ingress': 'to-lport',
             'egress': 'from-lport',
         }
-        cmd = self._ovn.add_acl(
-            lswitch=utils.ovn_name(port['network_id']),
-            lport=port['id'],
-            priority=ovn_const.ACL_PRIORITY_ALLOW,
-            action=ovn_const.ACL_ACTION_ALLOW_RELATED,
-            log=False,
-            direction=dir_map[r['direction']],
-            match=match,
-            external_ids={'neutron:lport': port['id']})
-        return cmd
+        acl = {"lswitch": utils.ovn_name(port['network_id']),
+               "lport": port['id'],
+               "priority": ovn_const.ACL_PRIORITY_ALLOW,
+               "action": ovn_const.ACL_ACTION_ALLOW_RELATED,
+               "log": False,
+               "direction": dir_map[r['direction']],
+               "match": match,
+               "external_ids": {'neutron:lport': port['id']}}
+        return acl
 
-    def _add_acl_cmd(self, acls, cmd):
-        if not cmd:
-            return
-        key = (cmd.columns['direction'],
-               cmd.columns['priority'],
-               cmd.columns['action'],
-               cmd.columns['match'])
-        if key not in acls:
-            # Make sure we don't create duplicate ACL rows.
-            acls[key] = cmd
-
-    def _add_acl_dhcp(self, context, port, txn, subnet_cache):
+    def _add_acl_dhcp(self, context, port, subnet_cache):
         # Allow DHCP responses through from source IPs on the local subnet.
         # We do this even if DHCP isn't enabled.  It could be enabled later.
         # We could hook into handling when it's enabled/disabled for a subnet,
@@ -897,60 +1071,67 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
         # once OVN native DHCP support merges, which is under development and
         # review already.
         # TODO(russellb) Remove this once OVN native DHCP support is merged.
+        acl_list = []
         for ip in port['fixed_ips']:
             subnet = self._acl_get_subnet_from_cache(context, subnet_cache,
                                                      ip['subnet_id'])
             if subnet['ip_version'] != 4:
                 continue
-            txn.add(self._ovn.add_acl(
-                lswitch=utils.ovn_name(port['network_id']),
-                lport=port['id'],
-                priority=ovn_const.ACL_PRIORITY_ALLOW,
-                action=ovn_const.ACL_ACTION_ALLOW,
-                log=False,
-                direction='to-lport',
-                match=('outport == "%s" && ip4 && ip4.src == %s && '
-                       'udp && udp.src == 67 && udp.dst == 68'
-                       ) % (port['id'], subnet['cidr']),
-                external_ids={'neutron:lport': port['id']}))
-            txn.add(self._ovn.add_acl(
-                lswitch=utils.ovn_name(port['network_id']),
-                lport=port['id'],
-                priority=ovn_const.ACL_PRIORITY_ALLOW,
-                action=ovn_const.ACL_ACTION_ALLOW,
-                log=False,
-                direction='from-lport',
-                match=('inport == "%s" && ip4 && '
-                       '(ip4.dst == 255.255.255.255 || ip4.dst == %s) && '
-                       'udp && udp.src == 68 && udp.dst == 67'
-                       ) % (port['id'], subnet['cidr']),
-                external_ids={'neutron:lport': port['id']}))
+            acl = {"lswitch": utils.ovn_name(port['network_id']),
+                   "lport": port['id'],
+                   "priority": ovn_const.ACL_PRIORITY_ALLOW,
+                   "action": ovn_const.ACL_ACTION_ALLOW,
+                   "log": False,
+                   "direction": 'to-lport',
+                   "match": ('outport == "%s" && ip4 && ip4.src == %s && '
+                             'udp && udp.src == 67 && udp.dst == 68'
+                             ) % (port['id'], subnet['cidr']),
+                   "external_ids": {'neutron:lport': port['id']}}
+            acl_list.append(acl)
+            acl = {"lswitch": utils.ovn_name(port['network_id']),
+                   "lport": port['id'],
+                   "priority": ovn_const.ACL_PRIORITY_ALLOW,
+                   "action": ovn_const.ACL_ACTION_ALLOW,
+                   "log": False,
+                   "direction": 'from-lport',
+                   "match": ('inport == "%s" && ip4 && '
+                             '(ip4.dst == 255.255.255.255 || '
+                             'ip4.dst == %s) && '
+                             'udp && udp.src == 68 && udp.dst == 67'
+                             ) % (port['id'], subnet['cidr']),
+                   "external_ids": {'neutron:lport': port['id']}}
+            acl_list.append(acl)
+        return acl_list
 
-    def _drop_all_ip_traffic_for_port(self, port, txn):
+    def _drop_all_ip_traffic_for_port(self, port):
+        acl_list = []
         for direction, p in (('from-lport', 'inport'),
                              ('to-lport', 'outport')):
-            txn.add(self._ovn.add_acl(
-                lswitch=utils.ovn_name(port['network_id']),
-                lport=port['id'],
-                priority=ovn_const.ACL_PRIORITY_DROP,
-                action=ovn_const.ACL_ACTION_DROP,
-                log=False,
-                direction=direction,
-                match='%s == "%s" && ip' % (p, port['id']),
-                external_ids={'neutron:lport': port['id']}))
+            lswitch = utils.ovn_name(port['network_id'])
+            lport = port['id']
+            acl = {"lswitch": lswitch, "lport": lport,
+                   "priority": ovn_const.ACL_PRIORITY_DROP,
+                   "action": ovn_const.ACL_ACTION_DROP,
+                   "log": False,
+                   "direction": direction,
+                   "match": '%s == "%s" && ip' % (p, port['id']),
+                   "external_ids": {'neutron:lport': port['id']}}
+            acl_list.append(acl)
+        return acl_list
 
-    def _add_acls(self, context, port, txn,
+    def _add_acls(self, context, port,
                   sg_cache=None, sg_ports_cache=None, subnet_cache=None):
+        acl_list = []
         sec_groups = port.get('security_groups', [])
         if not sec_groups:
-            return
+            return acl_list
 
         # Drop all IP traffic to and from the logical port by default.
-        self._drop_all_ip_traffic_for_port(port, txn)
+        acl_list += self._drop_all_ip_traffic_for_port(port)
 
         if subnet_cache is None:
             subnet_cache = {}
-        self._add_acl_dhcp(context, port, txn, subnet_cache)
+        acl_list += self._add_acl_dhcp(context, port, subnet_cache)
 
         # We often need a list of all ports on a security group.  Cache these
         # results so we only do the query once throughout this processing.
@@ -959,8 +1140,6 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
 
         # We create an ACL entry for each rule on each security group applied
         # to this port.
-        acls = {}
-
         for sg_id in sec_groups:
             if sg_cache and sg_id in sg_cache:
                 sg = sg_cache[sg_id]
@@ -969,65 +1148,22 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
                 if sg_cache is not None:
                     sg_cache[sg_id] = sg
             for r in sg['security_group_rules']:
-                cmd = self._add_sg_rule_acl_for_port(context, port, r,
+                acl = self._add_sg_rule_acl_for_port(context, port, r,
                                                      sg_ports_cache,
                                                      subnet_cache)
-                self._add_acl_cmd(acls, cmd)
+                if acl and acl not in acl_list:
+                    acl_list.append(acl)
 
-        for cmd in six.itervalues(acls):
-            txn.add(cmd)
+        return acl_list
 
     def create_port_in_ovn(self, context, port, ovn_port_info):
-        # When we create a port on a provider network, the mapping to
-        # OVN_Northbound is a bit different.  Every port on a provider network
-        # is modeled as a special OVN logical switch.
-        #
-        #    Logical Switch
-        #      Logical Port LP1 (maps to the neutron port)
-        #      Logical Port LP2 (type=localnet, models connection to the
-        #                        physical network)
-        #
-        # There is a logical switch associated with the network itself, but
-        # it's only used to stash the provider network attributes as
-        # external_ids.
-
         external_ids = {ovn_const.OVN_PORT_NAME_EXT_ID_KEY: port['name']}
         lswitch_name = utils.ovn_name(port['network_id'])
-        try:
-            lswitch = idlutils.row_by_value(self._ovn.idl, 'Logical_Switch',
-                                            'name', lswitch_name)
-        except idlutils.RowNotFound:
-            msg = _("Logical Switch %s does not exist") % lswitch_name
-            LOG.error(msg)
-            raise RuntimeError(msg)
-        net_ext_ids = getattr(lswitch, 'external_ids', {})
-
-        physnet = net_ext_ids.get(ovn_const.OVN_PHYSNET_EXT_ID_KEY)
-        if physnet:
-            # TODO(russellb) We should be able to do this all in 1 transaction,
-            # but our API wrappers aren't making that easy...
-            lswitch_name = utils.ovn_name(port['id'])
-            with self._ovn.transaction(check_error=True) as txn:
-                txn.add(self._ovn.create_lswitch(
-                    lswitch_name=lswitch_name,
-                    external_ids=external_ids))
 
         with self._ovn.transaction(check_error=True) as txn:
-            if physnet:
-                vlan_id = net_ext_ids.get(ovn_const.OVN_SEGID_EXT_ID_KEY)
-                if vlan_id is not None:
-                    vlan_id = int(vlan_id)
-                txn.add(self._ovn.create_lport(
-                    lport_name='provnet-%s' % port['id'],
-                    lswitch_name=lswitch_name,
-                    addresses=['unknown'],
-                    external_ids=external_ids,
-                    type='localnet',
-                    tag=vlan_id,
-                    options={'network_name': physnet}))
-            # The port name *must* be port['id'].  It must match the iface-id
-            # set in the Interfaces table of the Open_vSwitch database, which
-            # nova sets to be the port ID.
+            # The lport_name *must* be neutron port['id'].  It must match the
+            # iface-id set in the Interfaces table of the Open_vSwitch
+            # database which nova sets to be the port ID.
             txn.add(self._ovn.create_lport(
                     lport_name=port['id'],
                     lswitch_name=lswitch_name,
@@ -1041,15 +1177,17 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
                     port_security=ovn_port_info.port_security))
             sg_ports_cache = {}
             subnet_cache = {}
-            self._add_acls(context, port, txn,
-                           sg_ports_cache=sg_ports_cache,
-                           subnet_cache=subnet_cache)
+            acls_new = self._add_acls(context, port,
+                                      sg_ports_cache=sg_ports_cache,
+                                      subnet_cache=subnet_cache)
+            for acl in acls_new:
+                txn.add(self._ovn.add_acl(**acl))
 
-        for sg_id in port.get('security_groups', []):
-            self._refresh_remote_security_group(context, sg_id,
-                                                sg_ports_cache=sg_ports_cache,
-                                                exclude_ports=[port['id']],
-                                                subnet_cache=subnet_cache)
+        if len(port.get('fixed_ips')):
+            for sg_id in port.get('security_groups', []):
+                self._refresh_remote_security_group(
+                    context, sg_id, sg_ports_cache=sg_ports_cache,
+                    exclude_ports=[port['id']], subnet_cache=subnet_cache)
 
         return port
 
@@ -1074,23 +1212,12 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
 
     def delete_port(self, context, port_id, l3_port_check=True):
         port = self.get_port(context, port_id)
-        try:
-            # If this is a port on a provider network, we just need to delete
-            # the special logical switch for this port, and the 2 ports on the
-            # switch will get garbage collected.  Note that if the switch
-            # doesn't exist, we'll get an exception without actually having to
-            # execute a transaction with the remote db.  The check is local.
-            self._ovn.delete_lswitch(
-                utils.ovn_name(port['id']), if_exists=False).execute(
-                    check_error=True, log_errors=False)
-        except RuntimeError:
-            # If the switch doesn't exist, we'll get a RuntimeError, meaning
-            # we just need to delete a port.
-            with self._ovn.transaction(check_error=True) as txn:
-                txn.add(self._ovn.delete_lport(port_id,
-                        utils.ovn_name(port['network_id'])))
-                txn.add(self._ovn.delete_acl(
-                        utils.ovn_name(port['network_id']), port['id']))
+        num_fixed_ips = len(port.get('fixed_ips'))
+        with self._ovn.transaction(check_error=True) as txn:
+            txn.add(self._ovn.delete_lport(port_id,
+                    utils.ovn_name(port['network_id'])))
+            txn.add(self._ovn.delete_acl(
+                    utils.ovn_name(port['network_id']), port['id']))
 
         sg_ids = port.get('security_groups', [])
 
@@ -1098,23 +1225,41 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
             self.disassociate_floatingips(context, port_id)
             super(OVNPlugin, self).delete_port(context, port_id)
 
-        for sg_id in sg_ids:
-            self._refresh_remote_security_group(context, sg_id)
+        if num_fixed_ips:
+            for sg_id in sg_ids:
+                self._refresh_remote_security_group(context, sg_id)
 
     def extend_port_dict_binding(self, port_res, port_db):
         super(OVNPlugin, self).extend_port_dict_binding(port_res, port_db)
         self._update_port_binding(port_res)
 
+    # Register extend dict methods for network and port resources.
+    db_base_plugin_v2.NeutronDbPluginV2.register_dict_extend_funcs(
+        attr.NETWORKS, ['_extend_network_dict'])
+
+    db_base_plugin_v2.NeutronDbPluginV2.register_dict_extend_funcs(
+        attr.PORTS, ['_extend_port_dict'])
+
+    def _extend_network_dict(self, net_result, net_db):
+        self._extend_port_security_dict(net_result, net_db)
+
+    def _extend_port_dict(self, port_result, port_db):
+        self._extend_port_security_dict(port_result, port_db)
+
+    def _extend_port_security_dict(self, response_data, db_data):
+        if db_data.get('port_security') is None:
+            response_data[psec.PORTSECURITY] = (
+                psec.EXTENDED_ATTRIBUTES_2_0['networks']
+                [psec.PORTSECURITY]['default'])
+        else:
+            response_data[psec.PORTSECURITY] = (
+                db_data['port_security'][psec.PORTSECURITY])
+
     def create_router(self, context, router):
         router = super(OVNPlugin, self).create_router(
             context, router)
-        router_name = utils.ovn_name(router['id'])
-        external_ids = {ovn_const.OVN_ROUTER_NAME_EXT_ID_KEY:
-                        router.get('name', 'no_router_name')}
         try:
-            self._ovn.create_lrouter(router_name,
-                                     external_ids=external_ids
-                                     ).execute(check_error=True)
+            self.create_lrouter_in_ovn(router)
         except Exception:
             LOG.exception(_LE('Unable to create lrouter for %s'),
                           router['id'])
@@ -1122,6 +1267,21 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
             raise n_exc.ServiceUnavailable()
 
         return router
+
+    def create_lrouter_in_ovn(self, router):
+        """Create lrouter in OVN
+
+        @param router: Router to be created in OVN
+        @return: Nothing
+        """
+
+        router_name = utils.ovn_name(router['id'])
+        external_ids = {ovn_const.OVN_ROUTER_NAME_EXT_ID_KEY:
+                        router.get('name', 'no_router_name')}
+        with self._ovn.transaction(check_error=True) as txn:
+            txn.add(self._ovn.create_lrouter(router_name,
+                                             external_ids=external_ids
+                                             ))
 
     def delete_router(self, context, router_id):
         router_name = utils.ovn_name(router_id)
@@ -1151,16 +1311,13 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
 
         return result
 
-    def add_router_interface(self, context, router_id, interface_info):
-        router_interface_info = super(OVNPlugin, self).add_router_interface(
-            context, router_id, interface_info)
+    def create_lrouter_port_in_ovn(self, context, router_id, port):
+        """Create lrouter port in OVN
 
-        if not config.is_ovn_l3():
-            LOG.debug("OVN L3 mode is disabled, skipping "
-                      "add_router_interface")
-            return router_interface_info
-
-        port = self.get_port(context, router_interface_info['port_id'])
+        @param router id : LRouter ID for the port that needs to be created
+        @param port : LRouter port that needs to be created
+        @return: Nothing
+        """
         subnet_id = port['fixed_ips'][0]['subnet_id']
         subnet = self.get_subnet(context, subnet_id)
         lrouter = utils.ovn_name(router_id)
@@ -1177,6 +1334,18 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
 
             txn.add(self._ovn.set_lrouter_port_in_lport(port['id'],
                                                         lrouter_port_name))
+
+    def add_router_interface(self, context, router_id, interface_info):
+        router_interface_info = super(OVNPlugin, self).add_router_interface(
+            context, router_id, interface_info)
+
+        if not config.is_ovn_l3():
+            LOG.debug("OVN L3 mode is disabled, skipping "
+                      "add_router_interface")
+            return router_interface_info
+
+        port = self.get_port(context, router_interface_info['port_id'])
+        self.create_lrouter_port_in_ovn(context, router_id, port)
         return router_interface_info
 
     def remove_router_interface(self, context, router_id, interface_info):
@@ -1222,28 +1391,53 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
     def _update_acls_for_security_group(self, context, security_group_id,
                                         sg_ports_cache=None,
                                         exclude_ports=None,
-                                        subnet_cache=None):
-        # Update ACLs for all ports using this security group.  Note that the
-        # ovsdb IDL suppresses the transaction down to what has actually
-        # changed.
+                                        subnet_cache=None,
+                                        rule=None, is_add_acl=True):
         if exclude_ports is None:
             exclude_ports = []
         filters = {'security_group_id': [security_group_id]}
         sg_ports = self._get_port_security_group_bindings(context, filters)
-        with self._ovn.transaction(check_error=True) as txn:
-            sg_cache = {}
-            if sg_ports_cache is None:
-                sg_ports_cache = {}
-            if subnet_cache is None:
-                subnet_cache = {}
-            for binding in sg_ports:
-                if binding['port_id'] in exclude_ports:
-                    continue
-                port = self.get_port(context, binding['port_id'])
-                txn.add(self._ovn.delete_acl(
-                        utils.ovn_name(port['network_id']), port['id']))
-                self._add_acls(context, port, txn, sg_cache, sg_ports_cache,
-                               subnet_cache)
+        sg_cache = {}
+        if sg_ports_cache is None:
+            sg_ports_cache = {}
+        if subnet_cache is None:
+            subnet_cache = {}
+        port_list = []
+
+        # ACLs associated with a security group may span logical switches
+        sg_port_ids = [binding['port_id'] for binding in sg_ports]
+        sg_port_ids = list(set(sg_port_ids) - set(exclude_ports))
+        port_list = self.get_ports(context, filters={'id': sg_port_ids})
+        lswitch_names = set([p['network_id'] for p in port_list])
+        acl_new_values_dict = {}
+
+        # NOTE(lizk): When a certain rule is given, we can directly locate
+        # the affected acl records, so no need to compare new acl values with
+        # existing acl objects, such as case create_security_group_rule or
+        # delete_security_group_rule is calling this. But for other cases,
+        # since we don't know which acl records need be updated, compare will
+        # be needed.
+        need_compare = True
+        if rule:
+            need_compare = False
+            for port in port_list:
+                acl = self._add_sg_rule_acl_for_port(
+                    context, port, rule, {}, {})
+                # Remove lport and lswitch since we don't need them
+                acl.pop('lport')
+                acl.pop('lswitch')
+                acl_new_values_dict[port['id']] = acl
+        else:
+            for port in port_list:
+                acls_new = self._add_acls(context, port, sg_cache,
+                                          sg_ports_cache, subnet_cache)
+                acl_new_values_dict[port['id']] = acls_new
+
+        self._ovn.update_acls(list(lswitch_names),
+                              iter(port_list),
+                              acl_new_values_dict,
+                              need_compare=need_compare,
+                              is_add_acl=is_add_acl).execute(check_error=True)
 
     def update_security_group(self, context, id, security_group):
         res = super(OVNPlugin, self).update_security_group(context, id,
@@ -1265,7 +1459,8 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
         # here.  We put the rule in the Neutron db above and then update all
         # affected ports next.  If updating ports fails somehow, we're out of
         # sync until another change causes another refresh attempt.
-        self._update_acls_for_security_group(context, group_id)
+        self._update_acls_for_security_group(context, group_id, rule=rule,
+                                             is_add_acl=True)
         return res
 
     def delete_security_group_rule(self, context, id):
@@ -1277,7 +1472,9 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
         # ACL update to reflect the current state in OVN.  If updating OVN
         # fails, we'll be out of sync until another change happens that
         # triggers a refresh.
-        self._update_acls_for_security_group(context, group_id)
+        self._update_acls_for_security_group(context, group_id,
+                                             rule=security_group_rule,
+                                             is_add_acl=False)
 
     def get_workers(self):
         # See doc/source/design/ovn_worker.rst for more details.
@@ -1303,85 +1500,3 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
     def set_port_status_down(self, port_id):
         ctx = n_context.get_admin_context()
         self._update_port_status(ctx, port_id, const.PORT_STATUS_DOWN)
-
-    #
-    # SFI Extension functions
-    #
-    def create_sfi(self,context,sfi):
-        s = sfi['sfi']
-        network_id = s['network_id']
-        LOG.debug("SFI content: %s\n\n",s)
-        sfi_id = s.get('id') or uuidutils.generate_uuid()
-        sfi_data = dict( tenant_id = s['tenant_id'],
-                         name = s['name'],
-                         id = sfi_id,
-                         network_id = s['network_id'],
-                         in_port_id = s['in_port_id'],
-                         out_port_id = s['out_port_id'],
-                         app_port_id = s['app_port_id'])
-
-        with context.session.begin(subtransactions=True):
-            # Ensure that the network exists.
-            self._get_network(context, network_id)
-
-            # Create the service
-            db_sfi = models_v2.Sfi(**sfi_data)
-            context.session.add(db_sfi)
-
-        # db_sfi = self._make_sfi_dict(sfi_data, process_extensions=False)
-        return self.create_service_in_ovn(context,db_sfi,sfi_data)
-
-    def update_sfi(self,context,id, sfi):
-        current_sfi = self._get_sfi(context,id)
-        LOG.debug("get sfi: %s\n",current_sfi)
-        return self._make_sfi_dict(current_sfi,None)
-
-    def get_sfi(self, context, id,fields=None):
-        sfi = self._get_sfi(context,id)
-        LOG.debug("get sfi: %s\n",sfi)
-        return self._make_sfi_dict(sfi,fields)
-
-    def get_sfis(self, context, filters=None,fields=None):
-        LOG.debug("get sfis") 
-        marker_obj = self._get_marker_obj(context, 'sfi', None, None)
-        query = self._model_query(context,models_v2.Sfi)
-        items = []
-        for c in query:
-                   items.append(self._make_sfi_dict(c, fields))
- 
-        LOG.debug("get sfis: %s\n",items) 
-        return items
- 
- 
-
-    def delete_sfi(self,context, sfi_id):
-        LOG.info(_("delete sfi"))
-        service = self.get_sfi(context,sfi_id)
-
-        with self._ovn.transaction(check_error=True) as txn:
-                txn.add(self._ovn.delete_lservice(sfi_id,
-                        utils.ovn_name(service['network_id'])))
-
-    def create_service_in_ovn(self, context, service, ovn_service_info):
-        #
-        
-        external_ids = {ovn_const.OVN_SERVICE_NAME_EXT_ID_KEY: service['name']}
-        lswitch_name = utils.ovn_name(service['network_id'])
-        try:
-            lswitch = idlutils.row_by_value(self._ovn.idl, 'Logical_Switch',
-                                            'name', lswitch_name)
-        except idlutils.RowNotFound:
-            msg = _("Logical Switch %s does not exist") % lswitch_name
-            LOG.error(msg)
-            raise RuntimeError(msg)
-
-        with self._ovn.transaction(check_error=True) as txn:
-            txn.add(self._ovn.create_lservice(
-                    lservice_name = 'sfi-%s' % service['id'],
-                    lswitch_name = lswitch_name,
-                    name = ovn_service_info['name'],
-                    app_port = ovn_service_info['app_port_id'],
-                    in_port = ovn_service_info['in_port_id'],
-                    out_port = ovn_service_info['out_port_id'] ))
-
-        return service
