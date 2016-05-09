@@ -15,6 +15,7 @@ General Information and Other Project References:
    features
    contributing
    faq
+   refarch
    install
 
 Testing and Usage Information:
@@ -23,6 +24,7 @@ Testing and Usage Information:
    :maxdepth: 1
 
    testing
+   dpdk
    containers
    troubleshooting
 

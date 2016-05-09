@@ -100,4 +100,16 @@ def main():
         LOG.exception(_LE("Error syncing  the networks and ports. Check the "
                           "--database-connection value again"))
         return
+    try:
+        synchronizer.sync_acls(ctx)
+    except Exception:
+        LOG.exception(_LE("Error syncing  ACLs for unknown reason "
+                          "please try again"))
+        return
+    try:
+        synchronizer.sync_routers_and_rports(ctx)
+    except Exception:
+        LOG.exception(_LE("Error syncing  Routers and Router ports "
+                          "please try again"))
+        return
     LOG.info(_LI('Sync completed'))

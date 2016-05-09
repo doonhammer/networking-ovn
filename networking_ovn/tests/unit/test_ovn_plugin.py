@@ -14,8 +14,10 @@
 # limitations under the License.
 
 
+import copy
 import mock
 from oslo_utils import uuidutils
+import six
 from webob import exc
 
 from neutron.common import exceptions as n_exc
@@ -23,18 +25,23 @@ from neutron import context
 from neutron.core_extensions.qos import QosCoreResourceExtension
 from neutron.db.qos import api as qos_api
 from neutron.extensions import portbindings
+from neutron.extensions import providernet
 from neutron.objects.qos import policy as qos_policy
 from neutron.objects.qos import rule as qos_rule
 from neutron.services.qos.notification_drivers import manager as driver_mgr
 from neutron.services.qos import qos_consts
 from neutron.tests import tools
 from neutron.tests.unit import _test_extension_portbindings as test_bindings
+from neutron.tests.unit.db import test_allowedaddresspairs_db as test_aap
 from neutron.tests.unit.db import test_db_base_plugin_v2 as test_plugin
+from neutron.tests.unit.extensions import test_address_scope as test_as
 from neutron.tests.unit.extensions import test_availability_zone as test_az
 from neutron.tests.unit.extensions import test_extra_dhcp_opt as test_dhcpopts
 from neutron.tests.unit.extensions import test_l3 as test_l3_plugin
+from neutron.tests.unit.extensions import test_portsecurity
 
 from networking_ovn.common import constants as ovn_const
+from networking_ovn.ovsdb import commands as cmd
 from networking_ovn.ovsdb import impl_idl_ovn
 
 PLUGIN_NAME = ('networking_ovn.plugin.OVNPlugin')
@@ -86,6 +93,17 @@ class TestNetworksV2(test_plugin.TestNetworksV2, OVNPluginTestCase):
         req = self.new_delete_request('networks', net['network']['id'])
         res = req.get_response(self.api)
         self.assertEqual(res.status_int, exc.HTTPNoContent.code)
+
+    def test_create_provider_net(self):
+        net_data = {'network': {'name': 'provider',
+                                providernet.PHYSICAL_NETWORK: 'physnet1',
+                                providernet.NETWORK_TYPE: 'flat',
+                                providernet.SEGMENTATION_ID: 123,
+                                'tenant_id': self._tenant_id}}
+        network_req = self.new_create_request('networks', net_data, self.fmt)
+        net = self.deserialize(self.fmt, network_req.get_response(self.api))
+        for attr in providernet.ATTRIBUTES:
+            self.assertEqual(net_data['network'][attr], net['network'][attr])
 
 
 class TestPortsV2(test_plugin.TestPortsV2, OVNPluginTestCase,
@@ -157,19 +175,21 @@ class TestOvnPlugin(OVNPluginTestCase):
     def test_create_port_security(self):
         self.plugin._ovn.create_lport = mock.Mock()
         self.plugin._ovn.set_lport = mock.Mock()
-        kwargs = {'mac_address': '00:00:00:00:00:01'}
+        kwargs = {'mac_address': '00:00:00:00:00:01',
+                  'fixed_ips': [{'ip_address': '10.0.0.2'},
+                                {'ip_address': '10.0.0.4'}]}
         with self.network(set_context=True, tenant_id='test') as net1:
             with self.subnet(network=net1) as subnet1:
                 with self.port(subnet=subnet1,
-                               arg_list=('mac_address',),
+                               arg_list=('mac_address', 'fixed_ips'),
                                set_context=True, tenant_id='test',
                                **kwargs) as port:
                     self.assertTrue(
                         self.plugin._ovn.create_lport.called)
                     called_args_dict = (
                         (self.plugin._ovn.create_lport
-                         ).call_args_list[1][1])
-                    self.assertEqual(['00:00:00:00:00:01'],
+                         ).call_args_list[0][1])
+                    self.assertEqual(['00:00:00:00:00:01 10.0.0.2 10.0.0.4'],
                                      called_args_dict.get('port_security'))
 
                     data = {'port': {'mac_address': '00:00:00:00:00:02'}}
@@ -182,11 +202,10 @@ class TestOvnPlugin(OVNPluginTestCase):
                     called_args_dict = (
                         (self.plugin._ovn.set_lport
                          ).call_args_list[0][1])
-                    self.assertEqual(['00:00:00:00:00:02'],
+                    self.assertEqual(['00:00:00:00:00:02 10.0.0.2 10.0.0.4'],
                                      called_args_dict.get('port_security'))
 
     def test_create_port_with_disabled_security(self):
-        self.skipTest("Fix this after port-security extension is supported")
         self.plugin._ovn.create_lport = mock.Mock()
         self.plugin._ovn.set_lport = mock.Mock()
         kwargs = {'port_security_enabled': False}
@@ -218,12 +237,11 @@ class TestOvnPlugin(OVNPluginTestCase):
                                      called_args_dict.get('port_security'))
 
     def test_create_port_security_allowed_address_pairs(self):
-        self.skipTest("Fix this after allowed-address-pairs"
-                      " extension is supported")
         self.plugin._ovn.create_lport = mock.Mock()
         self.plugin._ovn.set_lport = mock.Mock()
         kwargs = {'allowed_address_pairs':
-                  [{"ip_address": "1.1.1.1",
+                  [{"ip_address": "1.1.1.1"},
+                   {"ip_address": "2.2.2.2",
                     "mac_address": "22:22:22:22:22:22"}]}
         with self.network(set_context=True, tenant_id='test') as net1:
             with self.subnet(network=net1) as subnet1:
@@ -237,10 +255,17 @@ class TestOvnPlugin(OVNPluginTestCase):
                         (self.plugin._ovn.create_lport
                          ).call_args_list[0][1])
                     self.assertEqual(
-                        tools.UnorderedList("22:22:22:22:22:22",
-                                            port['port']['mac_address']),
+                        tools.UnorderedList(
+                            ["22:22:22:22:22:22 2.2.2.2",
+                             port['port']['mac_address'] + ' ' + '10.0.0.2'
+                             + ' ' + '1.1.1.1']),
                         called_args_dict.get('port_security'))
 
+                    old_mac = port['port']['mac_address']
+
+                    # we are updating only the port mac address. So the
+                    # mac address of the allowed address pair ip 1.1.1.1
+                    # will have old mac address
                     data = {'port': {'mac_address': '00:00:00:00:00:01'}}
                     req = self.new_update_request(
                         'ports',
@@ -251,9 +276,11 @@ class TestOvnPlugin(OVNPluginTestCase):
                     called_args_dict = (
                         (self.plugin._ovn.set_lport
                          ).call_args_list[0][1])
-                    self.assertEqual(tools.UnorderedList("22:22:22:22:22:22",
-                                                         "00:00:00:00:00:01"),
-                                     called_args_dict.get('port_security'))
+                    self.assertEqual(tools.UnorderedList(
+                        ["22:22:22:22:22:22 2.2.2.2",
+                         "00:00:00:00:00:01 10.0.0.2",
+                         old_mac + " 1.1.1.1"]),
+                        called_args_dict.get('port_security'))
 
 
 class TestQosOvnPlugin(OVNPluginTestCase):
@@ -271,7 +298,7 @@ class TestQosOvnPlugin(OVNPluginTestCase):
         self.tenant_id = "tenant_id"
         self.ctxt = context.Context("", self.tenant_id)
         self.policy1 = self._create_qos_policy(self.ctxt, self.qos_policy_id1)
-        qos_policy.QosPolicy.get_by_id = mock.MagicMock(
+        qos_policy.QosPolicy.get_object = mock.MagicMock(
             return_value=self.policy1)
         qos_api.create_policy_network_binding = mock.Mock()
         qos_api.delete_policy_network_binding = mock.Mock()
@@ -383,101 +410,108 @@ class TestOvnPluginACLs(OVNPluginTestCase):
                             'cidr': '1.1.1.0/24'}
 
     def test__drop_all_ip_traffic_for_port(self):
-        self.plugin._ovn.add_acl = mock.Mock()
-        self.plugin._drop_all_ip_traffic_for_port(self.fake_port, mock.Mock())
-        self.plugin._ovn.add_acl.assert_has_calls(
-            [mock.call(action='drop', direction='from-lport',
-                       external_ids={'neutron:lport': self.fake_port['id']},
-                       log=False, lport=self.fake_port['id'],
-                       lswitch='neutron-network_id1',
-                       match='inport == "fake_port_id1" && ip', priority=1001),
-             mock.call(action='drop', direction='to-lport',
-                       external_ids={'neutron:lport': self.fake_port['id']},
-                       log=False, lport=self.fake_port['id'],
-                       lswitch='neutron-network_id1',
-                       match='outport == "fake_port_id1" && ip',
-                       priority=1001)])
+        acls = self.plugin._drop_all_ip_traffic_for_port(self.fake_port)
+        acl_to_lport = {'action': 'drop', 'direction': 'to-lport',
+                        'external_ids': {'neutron:lport':
+                                         self.fake_port['id']},
+                        'log': False, 'lport': self.fake_port['id'],
+                        'lswitch': 'neutron-network_id1',
+                        'match': 'outport == "fake_port_id1" && ip',
+                        'priority': 1001}
+        acl_from_lport = {'action': 'drop', 'direction': 'from-lport',
+                          'external_ids': {'neutron:lport':
+                                           self.fake_port['id']},
+                          'log': False, 'lport': self.fake_port['id'],
+                          'lswitch': 'neutron-network_id1',
+                          'match': 'inport == "fake_port_id1" && ip',
+                          'priority': 1001}
+        for acl in acls:
+            if 'to-lport' in acl.values():
+                self.assertEqual(acl_to_lport, acl)
+            if 'from-lport' in acl.values():
+                self.assertEqual(acl_from_lport, acl)
 
     def test__add_acl_dhcp_no_cache(self):
         self.plugin._ovn.add_acl = mock.Mock()
         with mock.patch.object(self.plugin, 'get_subnet',
                                return_value=self.fake_subnet):
-            self.plugin._add_acl_dhcp(self.context, self.fake_port,
-                                      mock.Mock(), {})
+            acls = self.plugin._add_acl_dhcp(self.context, self.fake_port, {})
 
         expected_match_to_lport = (
             'outport == "%s" && ip4 && ip4.src == %s && udp && udp.src == 67 '
             '&& udp.dst == 68') % (self.fake_port['id'],
                                    self.fake_subnet['cidr'])
+        acl_to_lport = {'action': 'allow', 'direction': 'to-lport',
+                        'external_ids': {'neutron:lport': 'fake_port_id1'},
+                        'log': False, 'lport': 'fake_port_id1',
+                        'lswitch': 'neutron-network_id1',
+                        'match': expected_match_to_lport, 'priority': 1002}
         expected_match_from_lport = (
             'inport == "%s" && ip4 && '
             '(ip4.dst == 255.255.255.255 || ip4.dst == %s) && '
             'udp && udp.src == 68 && udp.dst == 67'
         ) % (self.fake_port['id'], self.fake_subnet['cidr'])
-        self.plugin._ovn.add_acl.assert_has_calls(
-            [mock.call(action='allow', direction='to-lport',
-                       external_ids={'neutron:lport': 'fake_port_id1'},
-                       log=False, lport='fake_port_id1',
-                       lswitch='neutron-network_id1',
-                       match=expected_match_to_lport, priority=1002),
-             mock.call(action='allow', direction='from-lport',
-                       external_ids={'neutron:lport': 'fake_port_id1'},
-                       log=False, lport='fake_port_id1',
-                       lswitch='neutron-network_id1',
-                       match=expected_match_from_lport, priority=1002)])
+        acl_from_lport = {'action': 'allow', 'direction': 'from-lport',
+                          'external_ids': {'neutron:lport': 'fake_port_id1'},
+                          'log': False, 'lport': 'fake_port_id1',
+                          'lswitch': 'neutron-network_id1',
+                          'match': expected_match_from_lport, 'priority': 1002}
+        for acl in acls:
+            if 'to-lport' in acl.values():
+                self.assertEqual(acl_to_lport, acl)
+            if 'from-lport' in acl.values():
+                self.assertEqual(acl_from_lport, acl)
 
     def test__add_acl_dhcp_cache(self):
-        self.plugin._ovn.add_acl = mock.Mock()
-        self.plugin._add_acl_dhcp(self.context, self.fake_port, mock.Mock(),
-                                  {'subnet_id1': self.fake_subnet})
+        acls = self.plugin._add_acl_dhcp(self.context, self.fake_port,
+                                         {'subnet_id1': self.fake_subnet})
         expected_match_to_lport = (
             'outport == "%s" && ip4 && ip4.src == %s && udp && udp.src == 67 '
             '&& udp.dst == 68') % (self.fake_port['id'],
                                    self.fake_subnet['cidr'])
+        acl_to_lport = {'action': 'allow', 'direction': 'to-lport',
+                        'external_ids': {'neutron:lport': 'fake_port_id1'},
+                        'log': False, 'lport': 'fake_port_id1',
+                        'lswitch': 'neutron-network_id1',
+                        'match': expected_match_to_lport, 'priority': 1002}
         expected_match_from_lport = (
             'inport == "%s" && ip4 && '
             '(ip4.dst == 255.255.255.255 || ip4.dst == %s) && '
             'udp && udp.src == 68 && udp.dst == 67'
         ) % (self.fake_port['id'], self.fake_subnet['cidr'])
-        self.plugin._ovn.add_acl.assert_has_calls(
-            [mock.call(action='allow', direction='to-lport',
-                       external_ids={'neutron:lport': 'fake_port_id1'},
-                       log=False, lport='fake_port_id1',
-                       lswitch='neutron-network_id1',
-                       match=expected_match_to_lport, priority=1002),
-             mock.call(action='allow', direction='from-lport',
-                       external_ids={'neutron:lport': 'fake_port_id1'},
-                       log=False, lport='fake_port_id1',
-                       lswitch='neutron-network_id1',
-                       match=expected_match_from_lport, priority=1002)])
+        acl_from_lport = {'action': 'allow', 'direction': 'from-lport',
+                          'external_ids': {'neutron:lport': 'fake_port_id1'},
+                          'log': False, 'lport': 'fake_port_id1',
+                          'lswitch': 'neutron-network_id1',
+                          'match': expected_match_from_lport, 'priority': 1002}
+        for acl in acls:
+            if 'to-lport' in acl.values():
+                self.assertEqual(acl_to_lport, acl)
+            if 'from-lport' in acl.values():
+                self.assertEqual(acl_from_lport, acl)
 
     def test__add_acls_no_sec_group(self):
-        self.plugin._ovn.add_acl = mock.Mock()
-        self.plugin._add_acls(
-            self.context,
-            port={'security_groups': []},
-            txn=mock.Mock())
-        self.plugin._ovn.add_acl.assert_not_called()
+        acls = self.plugin._add_acls(self.context,
+                                     port={'security_groups': []})
+        self.assertEqual(acls, [])
 
     def _test__add_sg_rule_acl_for_port(self, sg_rule, direction, match):
         port = {'id': 'port-id',
                 'network_id': 'network-id'}
         self.plugin._ovn.add_acl = mock.Mock()
-        self.plugin._add_sg_rule_acl_for_port(
-            self.context,
-            port,
-            sg_rule,
-            sg_ports_cache={},
-            subnet_cache={})
-        self.plugin._ovn.add_acl.assert_called_once_with(
-            lswitch='neutron-network-id',
-            lport='port-id',
-            priority=ovn_const.ACL_PRIORITY_ALLOW,
-            action=ovn_const.ACL_ACTION_ALLOW_RELATED,
-            log=False,
-            direction=direction,
-            match=match,
-            external_ids={'neutron:lport': 'port-id'})
+        acl = self.plugin._add_sg_rule_acl_for_port(self.context,
+                                                    port,
+                                                    sg_rule,
+                                                    sg_ports_cache={},
+                                                    subnet_cache={})
+        self.assertEqual(acl, {'lswitch': 'neutron-network-id',
+                               'lport': 'port-id',
+                               'priority': ovn_const.ACL_PRIORITY_ALLOW,
+                               'action': ovn_const.ACL_ACTION_ALLOW_RELATED,
+                               'log': False,
+                               'direction': direction,
+                               'match': match,
+                               'external_ids': {'neutron:lport': 'port-id'}})
 
     def test__add_sg_rule_acl_for_port_remote_ip_prefix(self):
         sg_rule = {'direction': 'ingress',
@@ -550,6 +584,192 @@ class TestOvnPluginACLs(OVNPluginTestCase):
                                                  'from-lport',
                                                  match)
 
+    def test__update_acls_compute_difference(self):
+        lswitch_name = 'lswitch-1'
+        port1 = {'id': 'port-id1',
+                 'network_id': lswitch_name,
+                 'fixed_ips': [{'subnet_id': 'subnet-id',
+                                'ip_address': '1.1.1.101'},
+                               {'subnet_id': 'subnet-id-v6',
+                                'ip_address': '2001:0db8::1:0:0:1'}]}
+        port2 = {'id': 'port-id2',
+                 'network_id': lswitch_name,
+                 'fixed_ips': [{'subnet_id': 'subnet-id',
+                                'ip_address': '1.1.1.102'},
+                               {'subnet_id': 'subnet-id-v6',
+                                'ip_address': '2001:0db8::1:0:0:2'}]}
+        ports = [port1, port2]
+        # OLD ACLs, allow IPv4 communication
+        aclport1_old1 = {'priority': 1002, 'direction': 'from-lport',
+                         'lport': port1['id'], 'lswitch': lswitch_name,
+                         'match': 'inport == %s && ip4 && (ip.src == %s)' %
+                         (port1['id'], port1['fixed_ips'][0]['ip_address'])}
+        aclport1_old2 = {'priority': 1002, 'direction': 'from-lport',
+                         'lport': port1['id'], 'lswitch': lswitch_name,
+                         'match': 'inport == %s && ip6 && (ip.src == %s)' %
+                         (port1['id'], port1['fixed_ips'][1]['ip_address'])}
+        aclport1_old3 = {'priority': 1002, 'direction': 'to-lport',
+                         'lport': port1['id'], 'lswitch': lswitch_name,
+                         'match': 'ip4 && (ip.src == %s)' %
+                         (port2['fixed_ips'][0]['ip_address'])}
+        port1_acls_old = [aclport1_old1, aclport1_old2, aclport1_old3]
+        aclport2_old1 = {'priority': 1002, 'direction': 'from-lport',
+                         'lport': port2['id'], 'lswitch': lswitch_name,
+                         'match': 'inport == %s && ip4 && (ip.src == %s)' %
+                         (port2['id'], port2['fixed_ips'][0]['ip_address'])}
+        aclport2_old2 = {'priority': 1002, 'direction': 'from-lport',
+                         'lport': port2['id'], 'lswitch': lswitch_name,
+                         'match': 'inport == %s && ip6 && (ip.src == %s)' %
+                         (port2['id'], port2['fixed_ips'][1]['ip_address'])}
+        aclport2_old3 = {'priority': 1002, 'direction': 'to-lport',
+                         'lport': port2['id'], 'lswitch': lswitch_name,
+                         'match': 'ip4 && (ip.src == %s)' %
+                         (port1['fixed_ips'][0]['ip_address'])}
+        port2_acls_old = [aclport2_old1, aclport2_old2, aclport2_old3]
+        acls_old_dict = {'%s' % (port1['id']): port1_acls_old,
+                         '%s' % (port2['id']): port2_acls_old}
+        acl_obj_dict = {str(aclport1_old1): 'row1',
+                        str(aclport1_old2): 'row2',
+                        str(aclport1_old3): 'row3',
+                        str(aclport2_old1): 'row4',
+                        str(aclport2_old2): 'row5',
+                        str(aclport2_old3): 'row6'}
+        # NEW ACLs, allow IPv6 communication
+        aclport1_new1 = {'priority': 1002, 'direction': 'from-lport',
+                         'lport': port1['id'], 'lswitch': lswitch_name,
+                         'match': 'inport == %s && ip4 && (ip.src == %s)' %
+                         (port1['id'], port1['fixed_ips'][0]['ip_address'])}
+        aclport1_new2 = {'priority': 1002, 'direction': 'from-lport',
+                         'lport': port1['id'], 'lswitch': lswitch_name,
+                         'match': 'inport == %s && ip6 && (ip.src == %s)' %
+                         (port1['id'], port1['fixed_ips'][1]['ip_address'])}
+        aclport1_new3 = {'priority': 1002, 'direction': 'to-lport',
+                         'lport': port1['id'], 'lswitch': lswitch_name,
+                         'match': 'ip6 && (ip.src == %s)' %
+                         (port2['fixed_ips'][1]['ip_address'])}
+        port1_acls_new = [aclport1_new1, aclport1_new2, aclport1_new3]
+        aclport2_new1 = {'priority': 1002, 'direction': 'from-lport',
+                         'lport': port2['id'], 'lswitch': lswitch_name,
+                         'match': 'inport == %s && ip4 && (ip.src == %s)' %
+                         (port2['id'], port2['fixed_ips'][0]['ip_address'])}
+        aclport2_new2 = {'priority': 1002, 'direction': 'from-lport',
+                         'lport': port2['id'], 'lswitch': lswitch_name,
+                         'match': 'inport == %s && ip6 && (ip.src == %s)' %
+                         (port2['id'], port2['fixed_ips'][1]['ip_address'])}
+        aclport2_new3 = {'priority': 1002, 'direction': 'to-lport',
+                         'lport': port2['id'], 'lswitch': lswitch_name,
+                         'match': 'ip6 && (ip.src == %s)' %
+                         (port1['fixed_ips'][1]['ip_address'])}
+        port2_acls_new = [aclport2_new1, aclport2_new2, aclport2_new3]
+        acls_new_dict = {'%s' % (port1['id']): port1_acls_new,
+                         '%s' % (port2['id']): port2_acls_new}
+
+        acls_new_dict_copy = copy.deepcopy(acls_new_dict)
+
+        # Invoke _compute_acl_differences
+        update_cmd = cmd.UpdateACLsCommand(self.plugin._ovn,
+                                           [lswitch_name],
+                                           iter(ports),
+                                           acls_new_dict
+                                           )
+        acl_dels, acl_adds =\
+            update_cmd._compute_acl_differences(iter(ports),
+                                                acls_old_dict,
+                                                acls_new_dict,
+                                                acl_obj_dict)
+        # Sort the results for comparison
+        for row in six.itervalues(acl_dels):
+            row.sort()
+        for row in six.itervalues(acl_adds):
+            row.sort()
+        # Expected Difference (Sorted)
+        acl_del_exp = {lswitch_name: ['row3', 'row6']}
+        acl_adds_exp = {lswitch_name:
+                        [{'priority': 1002, 'direction': 'to-lport',
+                          'match': 'ip6 && (ip.src == %s)' %
+                          (port1['fixed_ips'][1]['ip_address'])},
+                         {'priority': 1002, 'direction': 'to-lport',
+                          'match': 'ip6 && (ip.src == %s)' %
+                          (port2['fixed_ips'][1]['ip_address'])}]}
+        self.assertEqual(acl_dels, acl_del_exp)
+        self.assertEqual(acl_adds, acl_adds_exp)
+
+        # make sure argument add_acl=False will take no affect in
+        # need_compare=True scenario
+        update_cmd_with_acl = cmd.UpdateACLsCommand(self.plugin._ovn,
+                                                    [lswitch_name],
+                                                    iter(ports),
+                                                    acls_new_dict_copy,
+                                                    need_compare=True,
+                                                    is_add_acl=False)
+        new_acl_dels, new_acl_adds =\
+            update_cmd_with_acl._compute_acl_differences(iter(ports),
+                                                         acls_old_dict,
+                                                         acls_new_dict_copy,
+                                                         acl_obj_dict)
+        for row in six.itervalues(new_acl_dels):
+            row.sort()
+        for row in six.itervalues(new_acl_adds):
+            row.sort()
+        self.assertEqual(acl_dels, new_acl_dels)
+        self.assertEqual(acl_adds, new_acl_adds)
+
+    def test__get_update_data_without_compare(self):
+        lswitch_name = 'lswitch-1'
+        port1 = {'id': 'port-id1',
+                 'network_id': lswitch_name,
+                 'fixed_ips': mock.Mock()}
+        port2 = {'id': 'port-id2',
+                 'network_id': lswitch_name,
+                 'fixed_ips': mock.Mock()}
+        ports = [port1, port2]
+        aclport1_new = {'priority': 1002, 'direction': 'to-lport',
+                        'match': 'outport == %s && ip4 && icmp4' %
+                        (port1['id'])}
+        aclport2_new = {'priority': 1002, 'direction': 'to-lport',
+                        'match': 'outport == %s && ip4 && icmp4' %
+                        (port2['id'])}
+        acls_new_dict = {'%s' % (port1['id']): aclport1_new,
+                         '%s' % (port2['id']): aclport2_new}
+
+        # test for creating new acls
+        update_cmd_add_acl = cmd.UpdateACLsCommand(self.plugin._ovn,
+                                                   [lswitch_name],
+                                                   iter(ports),
+                                                   acls_new_dict,
+                                                   need_compare=False,
+                                                   is_add_acl=True)
+        lswitch_dict, acl_del_dict, acl_add_dict = \
+            update_cmd_add_acl._get_update_data_without_compare()
+        self.assertIn('neutron-lswitch-1', lswitch_dict)
+        self.assertEqual({}, acl_del_dict)
+        expected_acls = {'neutron-lswitch-1': [aclport1_new, aclport2_new]}
+        self.assertEqual(expected_acls, acl_add_dict)
+
+        # test for deleting existing acls
+        acl1 = mock.Mock(
+            match='outport == port-id1 && ip4 && icmp4')
+        acl2 = mock.Mock(
+            match='outport == port-id2 && ip4 && icmp4')
+        acl3 = mock.Mock(
+            match='outport == port-id1 && ip4 && (ip4.src == fake_ip)')
+        lswitch_obj = mock.Mock(
+            name='neutron-lswitch-1', acls=[acl1, acl2, acl3])
+        with mock.patch('neutron.agent.ovsdb.native.idlutils.row_by_value',
+                        return_value=lswitch_obj):
+            update_cmd_del_acl = cmd.UpdateACLsCommand(self.plugin._ovn,
+                                                       [lswitch_name],
+                                                       iter(ports),
+                                                       acls_new_dict,
+                                                       need_compare=False,
+                                                       is_add_acl=False)
+            lswitch_dict, acl_del_dict, acl_add_dict = \
+                update_cmd_del_acl._get_update_data_without_compare()
+            self.assertIn('neutron-lswitch-1', lswitch_dict)
+            expected_acls = {'neutron-lswitch-1': [acl1, acl2]}
+            self.assertEqual(expected_acls, acl_del_dict)
+            self.assertEqual({}, acl_add_dict)
+
 
 class TestOvnPluginL3(OVNPluginTestCase):
 
@@ -569,7 +789,7 @@ class TestOvnPluginL3(OVNPluginTestCase):
         self.fake_subnet = {'id': 'subnet-id',
                             'cidr': '10.0.0.1/24'}
 
-    @mock.patch('neutron.db.l3_gwmode_db.L3_NAT_db_mixin.'
+    @mock.patch('neutron.db.l3_dvr_db.L3_NAT_with_dvr_db_mixin.'
                 'add_router_interface')
     def test_add_router_interface(self, func):
         self.plugin._ovn.add_lrouter_port = mock.Mock()
@@ -592,7 +812,7 @@ class TestOvnPluginL3(OVNPluginTestCase):
         self.plugin._ovn.set_lrouter_port_in_lport.assert_called_once_with(
             'router-port-id', 'lrp-router-port-id')
 
-    @mock.patch('neutron.db.l3_gwmode_db.L3_NAT_db_mixin.'
+    @mock.patch('neutron.db.l3_dvr_db.L3_NAT_with_dvr_db_mixin.'
                 'remove_router_interface')
     def test_remove_router_interface(self, func):
         self.plugin._ovn.delete_lrouter_port = mock.Mock()
@@ -627,4 +847,25 @@ class TestAZNetworkTestCase(test_az.TestAZNetworkCase, OVNPluginTestCase):
     def setUp(self, plugin=None):
         ext_mgr = test_az.AZExtensionManager()
         super(test_az.TestAZNetworkCase, self).setUp(
+            plugin=PLUGIN_NAME, ext_mgr=ext_mgr)
+
+
+class TestOvnPortSecurity(test_portsecurity.TestPortSecurity,
+                          OVNPluginTestCase):
+    def setUp(self, plugin=PLUGIN_NAME):
+        super(TestOvnPortSecurity, self).setUp(plugin=plugin)
+
+
+class TestOvnAllowedAddressPairs(test_aap.TestAllowedAddressPairs,
+                                 OVNPluginTestCase):
+    def setUp(self, plugin=PLUGIN_NAME, ext_mgr=None):
+        super(TestOvnAllowedAddressPairs, self).setUp(plugin=plugin,
+                                                      ext_mgr=ext_mgr)
+
+
+class TestOvnAddressScope(test_as.TestAddressScope,
+                          OVNPluginTestCase):
+    def setUp(self, plugin=None):
+        ext_mgr = test_as.AddressScopeTestExtensionManager()
+        super(test_as.TestAddressScope, self).setUp(
             plugin=PLUGIN_NAME, ext_mgr=ext_mgr)

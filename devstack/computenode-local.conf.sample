@@ -44,8 +44,8 @@ SERVICE_HOST=<IP address of host running everything else>
 RABBIT_HOST=$SERVICE_HOST
 Q_HOST=$SERVICE_HOST
 
-# How to connect to ovsdb-server hosting the OVN databases.
-OVN_REMOTE=tcp:$SERVICE_HOST:6640
+# How to connect to ovsdb-server hosting the OVN SB database
+OVN_SB_REMOTE=tcp:$SERVICE_HOST:6642
 
 # A UUID to uniquely identify this system.  If one is not specified, a random
 # one will be generated and saved in the file 'ovn-uuid' for re-use in future
@@ -56,7 +56,7 @@ OVN_REMOTE=tcp:$SERVICE_HOST:6640
 # tree. This is enabled by default.  This is required unless your distro kernel
 # includes ovs+conntrack support.  This support was first released in Linux 4.3,
 # and will likely be backported by some distros.
-#OVN_BUILD_MODULES=True
+#OVN_BUILD_MODULES=False
 
 HOST_IP=<IP address of current host>
 NOVA_VNC_ENABLED=True
@@ -67,3 +67,23 @@ VNCSERVER_PROXYCLIENT_ADDRESS=$VNCSERVER_LISTEN
 # If you enable the DHCP agent, configure it to provide a route for
 # metadata to instances.
 ENABLE_ISOLATED_METADATA=True
+
+# If you enable the DHCP agent, you can configure the availability
+# zone name (default is nova).
+#[[post-config|$Q_DHCP_CONF_FILE]]
+#[AGENT]
+#availability_zone = nova
+
+# Skydive
+#enable_plugin skydive https://github.com/redhat-cip/skydive.git
+#enable_service skydive-agent
+
+# Provider Network
+# If you want to enable a provider network instead of the default private
+# network after your DevStack environment installation, you *must* set the
+# Q_USE_PROVIDER_NETWORKING to True, and give value to both PHYSICAL_NETWORK
+# and OVS_PHYSICAL_BRIDGE. Please note that this only works when Q_L3_ENABLED
+# is False and q-l3 is disabled.
+#Q_USE_PROVIDER_NETWORKING=True
+#PHYSICAL_NETWORK=providernet
+#OVS_PHYSICAL_BRIDGE=br-provider

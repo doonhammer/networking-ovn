@@ -174,6 +174,13 @@ class API(object):
         """
 
     @abc.abstractmethod
+    def get_logical_switch_ids(self, lswitch_name):
+        """Get external_ids for a Logical_Switch.
+
+        :returns: dict of external_ids.
+        """
+
+    @abc.abstractmethod
     def get_all_logical_ports_ids(self):
         """Returns all logical ports names and external ids
 
@@ -286,4 +293,22 @@ class API(object):
         :param if_exists:    Do not fail if the ACL for this lport does not
                              exist
         :type if_exists:     bool
-    """
+        """
+
+    @abc.abstractmethod
+    def update_acls(self, lswitch_names, port_list, acl_new_values_dict,
+                    need_compare=True, is_add_acl=True):
+        """Update the list of acls on logical switches with new values.
+
+        :param lswitch_names:         List of logical switch names
+        :type lswitch_name:           []
+        :param port_list:             Iterator of list of ports
+        :type port_list:              []
+        :param acl_new_values_dict:   Dictionary of acls indexed by port id
+        :type acl_new_values_dict:    {}
+        :param need_compare:          If acl_new_values_dict need compare
+                                      with existing acls
+        :type need_compare:           bool
+        :is_add_acl:                  If updating is caused by adding acl
+        :type is_add_acl:             bool
+        """

@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
-cp networking-ovn/devstack/local.conf.sample devstack/local.conf
 
-if [ "$1" != "" ]; then
-    ovnip=$1
-fi
-
+# Script Arguments:
+# $1 - ovn-db IP address
+# $2 - provider network starting IP address
+# $3 - provider network ending IP address
+# $4 - provider network gateway
+# $5 - provider network network
+# $6 - ovn vm subnet
+ovnip=$1
 start_ip=$2
 end_ip=$3
 gateway=$4
 network=$5
+ovn_vm_subnet=$6
+
+cp networking-ovn/devstack/local.conf.sample devstack/local.conf
 
 # Get the IP address
 ipaddress=$(ip -4 addr show eth1 | grep -oP "(?<=inet ).*(?=/)")
@@ -21,7 +27,8 @@ HOST_IP=$ipaddress
 HOSTNAME=$(hostname)
 SERVICE_HOST_NAME=${HOST_NAME}
 SERVICE_HOST=$ipaddress
-OVN_REMOTE=tcp:$ovnip:6640
+OVN_SB_REMOTE=tcp:$ovnip:6642
+OVN_NB_REMOTE=tcp:$ovnip:6641
 
 # Enable logging to files.
 LOGFILE=/opt/stack/log/stack.sh.log
@@ -59,11 +66,13 @@ DEVSTACKEOF
 
 cat << 'DEVSTACKEOF' >> devstack/local.conf
 
-# Enable two DHCP agents per neutron subnet. Requires two or more compute
-# nodes.
+# Enable two DHCP agents per neutron subnet with support for availability
+# zones. Requires two or more compute nodes.
 
 [[post-config|/$NEUTRON_CONF]]
 [DEFAULT]
+network_scheduler_driver = neutron.scheduler.dhcp_agent_scheduler.AZAwareWeightScheduler
+dhcp_load_type = networks
 dhcp_agents_per_network = 2
 DEVSTACKEOF
 
@@ -83,3 +92,18 @@ neutron router-interface-add router private-subnet
 
 # Set the gateway for the router as the provider network.
 neutron router-gateway-set router provider
+
+# NFS server setup
+sudo apt-get update
+sudo apt-get install -y nfs-kernel-server nfs-common
+sudo mkdir -p /opt/stack/data/nova/instances
+sudo touch /etc/exports
+sudo sh -c "echo \"/opt/stack/data/nova/instances $ovn_vm_subnet(rw,sync,fsid=0,no_root_squash)\" >> /etc/exports"
+sudo service nfs-kernel-server restart
+sudo service idmapd restart
+
+# Set the OVN_*_DB variables to enable OVN commands using a remote database.
+echo -e "\n# Enable OVN commands using a remote database.
+export OVN_NB_DB=$OVN_NB_REMOTE
+export OVN_SB_DB=$OVN_SB_REMOTE" >> ~/.bash_profile
+

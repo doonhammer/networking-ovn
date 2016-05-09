@@ -15,7 +15,7 @@ services:
 
   Native implementation or conventional layer-3 agent. The native
   implementation supports distributed routing. However, it currently lacks
-  support for NAT.
+  support for floating IP addresses and NAT.
 
 * DHCP
 
@@ -32,38 +32,59 @@ services:
 
 The following Neutron API extensions are supported with OVN:
 
-+---------------------------+---------------------------+
-| Extension Name            | Extension Alias           |
-+===========================+===========================+
-| agent                     | agent                     |
-+---------------------------+---------------------------+
-| Availability Zone         | availability_zone         |
-+---------------------------+---------------------------+
-| DHCP Agent Scheduler      | dhcp_agent_scheduler      |
-+---------------------------+---------------------------+
-| Network Availability Zone | network_availability_zone |
-+---------------------------+---------------------------+
-| Neutron external network  | external-net              |
-+---------------------------+---------------------------+
-| Neutron Extra DHCP opts   | extra_dhcp_opt            |
-+---------------------------+---------------------------+
-| Neutron Extra Route       | extraroute                |
-+---------------------------+---------------------------+
-| Neutron L3 Router         | router                    |
-+---------------------------+---------------------------+
-| Network MTU               | net-mtu                   |
-+---------------------------+---------------------------+
-| Port Binding              | binding                   |
-+---------------------------+---------------------------+
-| Provider Network          | provider                  |
-+---------------------------+---------------------------+
-| Quality of Service        | qos                       |
-+---------------------------+---------------------------+
-| Quota management support  | quotas                    |
-+---------------------------+---------------------------+
-| RBAC Policies             | rbac-policies             |
-+---------------------------+---------------------------+
-| security-group            | security-group            |
-+---------------------------+---------------------------+
-| Subnet Allocation         | subnet_allocation         |
-+---------------------------+---------------------------+
++----------------------------------+---------------------------+
+| Extension Name                   | Extension Alias           |
++==================================+===========================+
+| agent                            | agent                     |
++----------------------------------+---------------------------+
+| Address Scopes *                 | address-scope             |
++----------------------------------+---------------------------+
+| Allowed Address Pairs            | allowed-address-pairs     |
++----------------------------------+---------------------------+
+| Auto Allocated Topology Services | auto-allocated-topology   |
++----------------------------------+---------------------------+
+| Availability Zone                | availability_zone         |
++----------------------------------+---------------------------+
+| DHCP Agent Scheduler             | dhcp_agent_scheduler      |
++----------------------------------+---------------------------+
+| HA Router extension *            | l3-ha                     |
++----------------------------------+---------------------------+
+| L3 Agent Scheduler *             | l3_agent_scheduler        |
++----------------------------------+---------------------------+
+| Network Availability Zone        | network_availability_zone |
++----------------------------------+---------------------------+
+| Network IP Availability          | network-ip-availability   |
++----------------------------------+---------------------------+
+| Neutron external network         | external-net              |
++----------------------------------+---------------------------+
+| Neutron Extra DHCP opts          | extra_dhcp_opt            |
++----------------------------------+---------------------------+
+| Neutron Extra Route              | extraroute                |
++----------------------------------+---------------------------+
+| Neutron L3 Router                | router                    |
++----------------------------------+---------------------------+
+| Network MTU                      | net-mtu                   |
++----------------------------------+---------------------------+
+| Port Binding                     | binding                   |
++----------------------------------+---------------------------+
+| Port Security                    | port-security             |
++----------------------------------+---------------------------+
+| Provider Network                 | provider                  |
++----------------------------------+---------------------------+
+| Quality of Service               | qos                       |
++----------------------------------+---------------------------+
+| Quota management support         | quotas                    |
++----------------------------------+---------------------------+
+| RBAC Policies                    | rbac-policies             |
++----------------------------------+---------------------------+
+| security-group                   | security-group            |
++----------------------------------+---------------------------+
+| Subnet Allocation                | subnet_allocation         |
++----------------------------------+---------------------------+
+| Tag support                      | tag                       |
++----------------------------------+---------------------------+
+| Time Stamp Fields                | timestamp_core            |
++----------------------------------+---------------------------+
+
+
+(\*) Only applicable when conventional layer-3 agent enabled.

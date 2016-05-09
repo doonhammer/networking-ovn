@@ -127,8 +127,8 @@ One can determine the DHCP port by running:
 This will return the DHCP port that was created by Neutron.
 
 The owner of the port, that is, the 'device_owner', will have details of the
-port owner. For example the port owner by a Nova instance with will have
-device_owner 'compute:None'.
+port owner. For example the port owned by a Nova instance will have
+device_owner 'compute:None' when availability zone is not set.
 
 Booting VMs
 -----------
@@ -385,19 +385,23 @@ controller node.
    .. code-block:: console
 
       # ovs-vsctl add-port br-int lport1 -- \
-      > set Interface lport1 external_ids:iface-id=IFACE_ID \
-      > type=internal
+        set Interface lport1 external_ids:iface-id=IFACE_ID \
+        type=internal
 
-   Replace ``IFACE_ID`` with the UUID of the neutron port.
+   Replace ``IFACE_ID`` with the UUID of the neutron port. Based on the example
+   output above, that would be ``92b4f192-7247-4ba0-88ad-40ce1d950e52``.
 
 #. Configure the MAC and IP address of the OVS port to use the same values as
    the neutron port in step 1 and bring it up.
 
    .. code-block:: console
 
-      # ip link set dev lport1 address fa:16:3e:23:6a:ab
+      # ip link set dev lport1 address MAC_ADDRESS
       # ip addr add 10.0.0.5/24 dev lport1
       # ip link set dev lport1 up
+
+   Replace ``MAC_ADDRESS`` with the mac address of the neutron port. Based on
+   the example output above, that would be ``fa:16:3e:23:6a:ab``.
 
 #. Verify connectivity from the host to an instance on the self-service
    network.
@@ -539,6 +543,26 @@ Alternatively, you can define connectivity to a VLAN instead of a flat network:
     --provider:network_type vlan \
     --provider:segmentation_id 101
 
+Observe that the OVN plugin created a special logical port of type localnet on
+the logical switch to model the connection to the physical network.
+
+::
+
+    $ ovn-nbctl show
+    ...
+     lswitch 5bbccbbd-f5ca-411b-bad9-01095d6f1316 (neutron-729dbbee-db84-4a3d-afc3-82c0b3701074)
+         lport provnet-729dbbee-db84-4a3d-afc3-82c0b3701074
+             addresses: ["unknown"]
+    ...
+
+    $ ovn-nbctl lport-get-type provnet-729dbbee-db84-4a3d-afc3-82c0b3701074
+    localnet
+
+    $ ovn-nbctl lport-get-options provnet-729dbbee-db84-4a3d-afc3-82c0b3701074
+    network_name=providernet
+
+If VLAN is used, there will be a VLAN tag shown on the localnet port as well.
+
 Finally, create a Neutron port on the provider network.
 
 ::
@@ -550,27 +574,6 @@ or if you followed the VLAN example, it would be:
 ::
 
     $ neutron port-create provider-101
-
-Observe that the OVN plugin created a special logical switch that models
-the connection between this port and the provider network.
-
-::
-
-    $ ovn-nbctl show
-    ...
-     lswitch 5bbccbbd-f5ca-411b-bad9-01095d6f1316 (neutron-729dbbee-db84-4a3d-afc3-82c0b3701074)
-         lport provnet-729dbbee-db84-4a3d-afc3-82c0b3701074
-             macs: unknown
-         lport 729dbbee-db84-4a3d-afc3-82c0b3701074
-             macs: fa:16:3e:20:38:d1
-    ...
-
-    $ ovn-nbctl lport-get-type provnet-729dbbee-db84-4a3d-afc3-82c0b3701074
-    localnet
-
-    $ ovn-nbctl lport-get-options provnet-729dbbee-db84-4a3d-afc3-82c0b3701074
-    network_name=providernet
-
 
 OVN L3
 ------
@@ -593,6 +596,33 @@ to have public network (north/south traffic) you must still use
 Neutron's L3 agent. With Neutron's L3 agent, all L3 traffic traverses
 the virtual router namespace on the network node running Neutron's
 L3 agent.
+
+Skydive
+-------
+
+`Skydive <https://github.com/redhat-cip/skydive>`_ is an open source real-time
+network topology and protocols analyzer. It aims to provide a comprehensive
+way of understanding what is happening in the network infrastructure. Skydive
+works by utilizing agents to collect host-local information, and sending this
+information to a central agent for further analysis. It utilizes elasticsearch
+to store the data.
+
+To enable Skydive support with OVN and devstack, enable it on the control
+and compute nodes.
+
+On the control node, enable it as follows:
+
+::
+
+    enable_plugin skydive https://github.com/redhat-cip/skydive.git
+    enable_service skydive-analyzer
+
+On the compute nodes, enable it as follows:
+
+::
+
+    enable_plugin skydive https://github.com/redhat-cip/skydive.git
+    enable_service skydive-agent
 
 Troubleshooting
 ---------------

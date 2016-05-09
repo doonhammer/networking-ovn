@@ -1,3 +1,5 @@
+.. _installation:
+
 Installation
 ============
 
@@ -35,6 +37,16 @@ and compatible distributions automatically installs ``openvswitch`` as a
 dependency. Ubuntu/Debian includes ``ovn-central``, ``ovn-host``,
 ``ovn-docker``, and ``ovn-common`` packages that pull in the appropriate Open
 vSwitch dependencies as needed.
+
+A ``python-networking-ovn`` RPM may be obtained for Fedora or CentOS from
+the RDO project.  A package based on the ``master`` branch of
+``networking-ovn`` can be found at http://trunk.rdoproject.org/.
+
+Fedora and CentOS RPM builds of OVS and OVN from the ``master`` branch of
+``ovs`` can be found in this COPR repository:
+https://copr.fedorainfracloud.org/coprs/pmatilai/dpdk-snapshot/.  Note that
+this repository contains OVS built with DPDK support, but that should have no
+effect unless you choose to enable the use of DPDK.
 
 Controller nodes
 ----------------
@@ -94,6 +106,17 @@ primary node. See the :ref:`faq` for more information.
    .. code-block:: console
 
       # /usr/share/openvswitch/scripts/ovn-ctl start_northd
+
+   Options for *start_northd*:
+   .. code-block:: console
+
+      # /usr/share/openvswitch/scripts/ovn-ctl start_northd --help
+      # ...
+      # DB_NB_SOCK="/usr/local/etc/openvswitch/nb_db.sock"
+      # DB_NB_PID="/usr/local/etc/openvswitch/ovnnb_db.pid"
+      # DB_SB_SOCK="usr/local/etc/openvswitch/sb_db.sock"
+      # DB_SB_PID="/usr/local/etc/openvswitch/ovnsb_db.pid"
+      # ...
 
 #. Configure the Networking server component. The Networking service
    implements OVN as a core plug-in similar to ML2. Edit the

@@ -10,10 +10,13 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import six
+
 from neutron.agent.ovsdb.native.commands import BaseCommand
 from neutron.agent.ovsdb.native import idlutils
 
 from networking_ovn._i18n import _
+from networking_ovn.common import utils
 
 
 class AddLSwitchCommand(BaseCommand):
@@ -439,3 +442,165 @@ class DelACLCommand(BaseCommand):
             acls.remove(acl)
             acl.delete()
         setattr(lswitch, 'acls', acls)
+
+
+class UpdateACLsCommand(BaseCommand):
+    def __init__(self, api, lswitch_names, port_list, acl_new_values_dict,
+                 need_compare=True, is_add_acl=True):
+        """This command updates the acl list for the logical switches
+
+        @param lswitch_names: List of Logical Switch Names
+        @type lswitch_names: []
+        @param port_list: Iterator of List of Ports
+        @type port_list: []
+        @param acl_new_values_dict: Dictionary of acls indexed by port id
+        @type acl_new_values_dict: {}
+        @need_compare: If acl_new_values_dict needs be compared with existing
+                       acls.
+        @type: Boolean.
+        @is_add_acl: If updating is caused by acl adding action.
+        @type: Boolean.
+
+        """
+        super(UpdateACLsCommand, self).__init__(api)
+        self.lswitch_names = lswitch_names
+        self.port_list = port_list
+        self.acl_new_values_dict = acl_new_values_dict
+        self.need_compare = need_compare
+        self.is_add_acl = is_add_acl
+
+    def _acl_list_sub(self, acl_list1, acl_list2):
+        """Compute the elements in acl_list1 but not in acl_list2.
+
+        If acl_list1 and acl_list2 were sets, the result of this routine
+        could be thought of as acl_list1 - acl_list2. Note that acl_list1
+        and acl_list2 cannot actually be sets as they contain dictionary
+        items i.e. set([{'a':1}) doesn't work.
+        """
+        acl_diff = []
+        for acl in acl_list1:
+            if acl not in acl_list2:
+                acl_diff.append(acl)
+        return acl_diff
+
+    def _compute_acl_differences(self, port_list, acl_old_values_dict,
+                                 acl_new_values_dict, acl_obj_dict):
+        """Compute the difference between the new and old sets of acls
+
+        @param port_list: Iterator of a List of ports
+        @type port_list: []
+        @param acl_old_values_dict: Dictionary of old acl values indexed
+                                    by port id
+        @param acl_new_values_dict: Dictionary of new acl values indexed
+                                    by port id
+        @param acl_obj_dict: Dictionary of acl objects indexed by the acl
+                             value in string format.
+        @var acl_del_objs_dict: Dictionary of acl objects to be deleted
+                                indexed by the lswitch.
+        @var acl_add_values_dict: Dictionary of acl values to be added
+                                  indexed by the lswitch.
+        @return: (acl_del_objs_dict, acl_add_values_dict)
+        @rtype: ({}, {})
+        """
+
+        acl_del_objs_dict = {}
+        acl_add_values_dict = {}
+        for port in port_list:
+            lswitch_name = port['network_id']
+            acls_old = acl_old_values_dict.get(port['id'], [])
+            acls_new = acl_new_values_dict.get(port['id'], [])
+            acls_del = self._acl_list_sub(acls_old, acls_new)
+            acls_add = self._acl_list_sub(acls_new, acls_old)
+            acl_del_objs = acl_del_objs_dict.setdefault(lswitch_name, [])
+            for acl in acls_del:
+                acl_del_objs.append(acl_obj_dict[str(acl)])
+            acl_add_values = acl_add_values_dict.setdefault(lswitch_name, [])
+            for acl in acls_add:
+                # Remove lport and lswitch columns
+                del acl['lswitch']
+                del acl['lport']
+                acl_add_values.append(acl)
+        return acl_del_objs_dict, acl_add_values_dict
+
+    def _delete_acls(self, lswitch_name, acls, acls_delete):
+        for acl_delete in acls_delete:
+            try:
+                acls.remove(acl_delete)
+            except ValueError:
+                msg = _("Logical Switch %s missing acl") % lswitch_name
+                raise RuntimeError(msg)
+            acl_delete.delete()
+
+    def _add_acls(self, txn, acls, acl_values):
+        rows = []
+        for acl_value in acl_values:
+            row = txn.insert(self.api._tables['ACL'])
+            for col, val in acl_value.items():
+                setattr(row, col, val)
+            rows.append(row)
+        for row in rows:
+            acls.append(row.uuid)
+
+    def _get_update_data_without_compare(self):
+        lswitch_ovsdb_dict = {}
+        for switch_name in self.lswitch_names:
+            switch_name = utils.ovn_name(switch_name)
+            lswitch = idlutils.row_by_value(self.api.idl, 'Logical_Switch',
+                                            'name', switch_name)
+            lswitch_ovsdb_dict[switch_name] = lswitch
+        if self.is_add_acl:
+            acl_add_values_dict = {}
+            for port in self.port_list:
+                switch_name = utils.ovn_name(port['network_id'])
+                if switch_name not in acl_add_values_dict:
+                    acl_add_values_dict[switch_name] = []
+                acl_add_values_dict[switch_name].append(
+                    self.acl_new_values_dict[port['id']])
+            acl_del_objs_dict = {}
+        else:
+            acl_add_values_dict = {}
+            acl_del_objs_dict = {}
+            del_acl_matches = []
+            for acl_dict in self.acl_new_values_dict.values():
+                del_acl_matches.append(acl_dict['match'])
+            for switch_name, lswitch in six.iteritems(lswitch_ovsdb_dict):
+                if switch_name not in acl_del_objs_dict:
+                    acl_del_objs_dict[switch_name] = []
+                lswitch.verify('acls')
+                acls = getattr(lswitch, 'acls', [])
+                for acl in acls:
+                    if getattr(acl, 'match') in del_acl_matches:
+                        acl_del_objs_dict[switch_name].append(acl)
+        return lswitch_ovsdb_dict, acl_del_objs_dict, acl_add_values_dict
+
+    def run_idl(self, txn):
+
+        if self.need_compare:
+            # Get all relevant ACLs in 1 shot
+            acl_values_dict, acl_obj_dict, lswitch_ovsdb_dict = \
+                self.api.get_acls_for_lswitches(self.lswitch_names)
+
+            # Compute the difference between the new and old set of ACLs
+            acl_del_objs_dict, acl_add_values_dict = \
+                self._compute_acl_differences(
+                    self.port_list, acl_values_dict,
+                    self.acl_new_values_dict, acl_obj_dict)
+        else:
+            lswitch_ovsdb_dict, acl_del_objs_dict, acl_add_values_dict = \
+                self._get_update_data_without_compare()
+
+        for lswitch_name, lswitch in six.iteritems(lswitch_ovsdb_dict):
+            lswitch.verify('acls')
+            acls = getattr(lswitch, 'acls', [])
+
+            # Delete ACLs
+            acl_del_objs = acl_del_objs_dict.get(lswitch_name, [])
+            if acl_del_objs:
+                self._delete_acls(lswitch_name, acls, acl_del_objs)
+
+            # Add new ACLs
+            acl_add_values = acl_add_values_dict.get(lswitch_name, [])
+            if acl_add_values:
+                self._add_acls(txn, acls, acl_add_values)
+
+            setattr(lswitch, 'acls', acls)

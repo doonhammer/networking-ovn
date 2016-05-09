@@ -11,19 +11,19 @@
 # under the License.
 
 #
-# This script is executed in the tempest-dsvm-networking-ovn
-# OpenStack CI job that runs DevStack + tempest.  It is also used by the
-# rally job. You can find the CI job configuration here:
+# This script is executed in the tempest-dsvm-networking-ovn-native-l3
+# OpenStack CI job that runs DevStack + tempest using OVN's native l3.
+# You can find the CI job configuration here:
 #
 # http://git.openstack.org/cgit/openstack-infra/project-config/tree/jenkins/jobs/networking-ovn.yaml
 #
 
-export OVERRIDE_ENABLED_SERVICES=key,n-api,n-cpu,n-cond,n-sch,n-crt,n-cauth,n-obj,g-api,g-reg,c-sch,c-api,c-vol,horizon,rabbit,mysql,dstat,ovn-northd,ovn-controller,q-svc,q-dhcp,q-l3
+export OVERRIDE_ENABLED_SERVICES=key,n-api,n-cpu,n-cond,n-sch,n-crt,n-cauth,n-obj,g-api,g-reg,c-sch,c-api,c-vol,horizon,rabbit,mysql,dstat,ovn-northd,ovn-controller,q-svc,q-dhcp
 if [ -z "${RALLY_SCENARIO}" ] ; then
     # Only include tempest if this is not a rally job.
     export OVERRIDE_ENABLED_SERVICES=${OVERRIDE_ENABLED_SERVICES},tempest
 fi
-export DEVSTACK_LOCAL_CONFIG+=$'\n'"OVN_L3_MODE=False"
+export DEVSTACK_LOCAL_CONFIG+=$'\n'"OVN_L3_CREATE_PUBLIC_NETWORK=True"
 
 # Begin list of exclusions.
 r="^(?!.*"
@@ -31,7 +31,25 @@ r="^(?!.*"
 # exclude the slow tag (part of the default for 'full')
 r="$r(?:.*\[.*\bslow\b.*\])"
 
-# exclude things that just aren't enabled:
+# exclude things that aren't fully implemented yet in the OVN native L3 agent
+
+# NOTE: Re-enable floating ip tests once floating IPs are implemented
+# in OVN (bug 1514995).
+r="$r|(?:tempest\.api\.compute\.floating_ips.*)"
+r="$r|(?:tempest\.api\.network\.admin\.test_floating_ips_admin_actions.*)"
+r="$r|(?:tempest\.api\.network\.test_floating_ips.*)"
+r="$r|(?:tempest\.scenario\.test_minimum_basic.*)"
+r="$r|(?:tempest\.scenario\.test_network_advanced_server_ops.*)"
+r="$r|(?:tempest\.scenario\.test_network_basic_ops.*)"
+r="$r|(?:tempest\.scenario\.test_network_v6.*)"
+r="$r|(?:tempest\.scenario\.test_security_groups_basic_ops.*)"
+r="$r|(?:tempest\.scenario\.test_shelve_instance.*)"
+r="$r|(?:tempest\.scenario\.test_snapshot_pattern.*)"
+r="$r|(?:tempest\.scenario\.test_stamp_pattern.*)"
+r="$r|(?:tempest\.scenario\.test_volume_boot_pattern.*)"
+
+# exclude things that just aren't enabled with OVN
+r="$r|(?:tempest\.api\.network\.admin\.test_l3_agent_scheduler.*)"
 r="$r|(?:tempest\.api\.network\.admin\.test_quotas\.QuotasTest\.test_lbaas_quotas.*)"
 r="$r|(?:tempest\.api\.network\.test_load_balancer.*)"
 r="$r|(?:tempest\.scenario\.test_load_balancer.*)"
