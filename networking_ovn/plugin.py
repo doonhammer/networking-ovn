@@ -15,7 +15,9 @@ import collections
 
 import netaddr
 
+from neutron_lib.api import validators
 from neutron_lib import constants as const
+from neutron_lib import exceptions as n_exc
 from oslo_config import cfg
 from oslo_log import log
 from oslo_utils import importutils
@@ -34,7 +36,6 @@ from neutron.api.v2 import attributes as attr
 from neutron.callbacks import events
 from neutron.callbacks import registry
 from neutron.callbacks import resources
-from neutron.common import exceptions as n_exc
 from neutron.common import rpc as n_rpc
 from neutron.common import topics
 from neutron import context as n_context
@@ -244,7 +245,7 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
 
     def _get_attribute(self, obj, attribute):
         res = obj.get(attribute)
-        if res is attr.ATTR_NOT_SPECIFIED:
+        if res is const.ATTR_NOT_SPECIFIED:
             res = None
         return res
 
@@ -710,7 +711,7 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
 
     def get_data_from_binding_profile(self, context, port):
         if (ovn_const.OVN_PORT_BINDING_PROFILE not in port or
-                not attr.is_attr_set(
+                not validators.is_attr_set(
                     port[ovn_const.OVN_PORT_BINDING_PROFILE])):
             return {}
 
@@ -824,7 +825,7 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
             # NOTE(arosen): _process_portbindings_create_and_update
             # does not set the binding on the port so we do it here.
             if (ovn_const.OVN_PORT_BINDING_PROFILE in pdict and
-                attr.is_attr_set(
+                validators.is_attr_set(
                     pdict[ovn_const.OVN_PORT_BINDING_PROFILE])):
                 db_port[ovn_const.OVN_PORT_BINDING_PROFILE] = \
                     pdict[ovn_const.OVN_PORT_BINDING_PROFILE]
@@ -886,7 +887,7 @@ class OVNPlugin(db_base_plugin_v2.NeutronDbPluginV2,
             const.DEVICE_OWNER_NETWORK_PREFIX):
             return False
 
-        if attr.is_attr_set(port.get(psec.PORTSECURITY)):
+        if validators.is_attr_set(port.get(psec.PORTSECURITY)):
             port_security_enabled = port[psec.PORTSECURITY]
         else:
             try:
