@@ -40,6 +40,7 @@ from neutron.tests.unit.extensions import test_extra_dhcp_opt as test_dhcpopts
 from neutron.tests.unit.extensions import test_l3 as test_l3_plugin
 from neutron.tests.unit.extensions import test_portsecurity
 
+from networking_ovn.common import acl as acl_utils
 from networking_ovn.common import constants as ovn_const
 from networking_ovn.ovsdb import commands as cmd
 from networking_ovn.ovsdb import impl_idl_ovn
@@ -409,33 +410,13 @@ class TestOvnPluginACLs(OVNPluginTestCase):
                             'ip_version': 4,
                             'cidr': '1.1.1.0/24'}
 
-    def test__drop_all_ip_traffic_for_port(self):
-        acls = self.plugin._drop_all_ip_traffic_for_port(self.fake_port)
-        acl_to_lport = {'action': 'drop', 'direction': 'to-lport',
-                        'external_ids': {'neutron:lport':
-                                         self.fake_port['id']},
-                        'log': False, 'lport': self.fake_port['id'],
-                        'lswitch': 'neutron-network_id1',
-                        'match': 'outport == "fake_port_id1" && ip',
-                        'priority': 1001}
-        acl_from_lport = {'action': 'drop', 'direction': 'from-lport',
-                          'external_ids': {'neutron:lport':
-                                           self.fake_port['id']},
-                          'log': False, 'lport': self.fake_port['id'],
-                          'lswitch': 'neutron-network_id1',
-                          'match': 'inport == "fake_port_id1" && ip',
-                          'priority': 1001}
-        for acl in acls:
-            if 'to-lport' in acl.values():
-                self.assertEqual(acl_to_lport, acl)
-            if 'from-lport' in acl.values():
-                self.assertEqual(acl_from_lport, acl)
-
-    def test__add_acl_dhcp_no_cache(self):
+    def test_add_acl_dhcp(self):
         self.plugin._ovn.add_acl = mock.Mock()
         with mock.patch.object(self.plugin, 'get_subnet',
                                return_value=self.fake_subnet):
-            acls = self.plugin._add_acl_dhcp(self.context, self.fake_port, {})
+            subnet = acl_utils._get_subnet_from_cache(
+                self.plugin, self.context, {}, 'subnet_id')
+            acls = acl_utils.add_acl_dhcp(self.fake_port, subnet)
 
         expected_match_to_lport = (
             'outport == "%s" && ip4 && ip4.src == %s && udp && udp.src == 67 '
@@ -462,48 +443,23 @@ class TestOvnPluginACLs(OVNPluginTestCase):
             if 'from-lport' in acl.values():
                 self.assertEqual(acl_from_lport, acl)
 
-    def test__add_acl_dhcp_cache(self):
-        acls = self.plugin._add_acl_dhcp(self.context, self.fake_port,
-                                         {'subnet_id1': self.fake_subnet})
-        expected_match_to_lport = (
-            'outport == "%s" && ip4 && ip4.src == %s && udp && udp.src == 67 '
-            '&& udp.dst == 68') % (self.fake_port['id'],
-                                   self.fake_subnet['cidr'])
-        acl_to_lport = {'action': 'allow', 'direction': 'to-lport',
-                        'external_ids': {'neutron:lport': 'fake_port_id1'},
-                        'log': False, 'lport': 'fake_port_id1',
-                        'lswitch': 'neutron-network_id1',
-                        'match': expected_match_to_lport, 'priority': 1002}
-        expected_match_from_lport = (
-            'inport == "%s" && ip4 && '
-            '(ip4.dst == 255.255.255.255 || ip4.dst == %s) && '
-            'udp && udp.src == 68 && udp.dst == 67'
-        ) % (self.fake_port['id'], self.fake_subnet['cidr'])
-        acl_from_lport = {'action': 'allow', 'direction': 'from-lport',
-                          'external_ids': {'neutron:lport': 'fake_port_id1'},
-                          'log': False, 'lport': 'fake_port_id1',
-                          'lswitch': 'neutron-network_id1',
-                          'match': expected_match_from_lport, 'priority': 1002}
-        for acl in acls:
-            if 'to-lport' in acl.values():
-                self.assertEqual(acl_to_lport, acl)
-            if 'from-lport' in acl.values():
-                self.assertEqual(acl_from_lport, acl)
-
-    def test__add_acls_no_sec_group(self):
-        acls = self.plugin._add_acls(self.context,
-                                     port={'security_groups': []})
+    def test_add_acls_no_sec_group(self):
+        acls = acl_utils.add_acls(self.plugin, self.context,
+                                  port={'security_groups': []},
+                                  sg_cache={}, sg_ports_cache={},
+                                  subnet_cache={})
         self.assertEqual(acls, [])
 
     def _test__add_sg_rule_acl_for_port(self, sg_rule, direction, match):
         port = {'id': 'port-id',
                 'network_id': 'network-id'}
         self.plugin._ovn.add_acl = mock.Mock()
-        acl = self.plugin._add_sg_rule_acl_for_port(self.context,
-                                                    port,
-                                                    sg_rule,
-                                                    sg_ports_cache={},
-                                                    subnet_cache={})
+        acl = acl_utils._add_sg_rule_acl_for_port(self.plugin,
+                                                  self.context,
+                                                  port,
+                                                  sg_rule,
+                                                  sg_ports_cache={},
+                                                  subnet_cache={})
         self.assertEqual(acl, {'lswitch': 'neutron-network-id',
                                'lport': 'port-id',
                                'priority': ovn_const.ACL_PRIORITY_ALLOW,
@@ -791,7 +747,9 @@ class TestOvnPluginL3(OVNPluginTestCase):
 
         self.fake_router = {'id': 'router-id',
                             'name': 'router',
-                            'admin_state_up': False}
+                            'admin_state_up': False,
+                            'routes': [{'destination': '1.1.1.0/24',
+                                        'nexthop': '2.2.2.3'}]}
 
     @mock.patch('neutron.db.l3_dvr_db.L3_NAT_with_dvr_db_mixin.'
                 'add_router_interface')
@@ -879,6 +837,36 @@ class TestOvnPluginL3(OVNPluginTestCase):
         self.plugin._ovn.update_lrouter.assert_called_once_with(
             'neutron-router-id',
             external_ids={'neutron:router_name': 'test'})
+
+    @mock.patch('neutron.db.l3_db.L3_NAT_db_mixin.update_router')
+    def test_update_router_static_route_no_change(self, func):
+        router_id = 'router-id'
+        update_data = {'router': {'routes': [{'destination': '1.1.1.0/24',
+                                              'nexthop': '2.2.2.3'}]}}
+        with mock.patch('neutron.db.l3_db.L3_NAT_dbonly_mixin.'
+                        'get_router', return_value=self.fake_router),\
+            mock.patch('neutron.db.extraroute_db.ExtraRoute_dbonly_mixin.'
+                       'update_router', return_value=self.fake_router):
+            self.plugin.update_router(self.context, router_id, update_data)
+        self.assertFalse(self.plugin._ovn.add_static_route.called)
+        self.assertFalse(self.plugin._ovn.delete_static_route.called)
+
+    @mock.patch('neutron.db.l3_db.L3_NAT_db_mixin.update_router')
+    def test_update_router_static_route_change(self, func):
+        router_id = 'router-id'
+        update_data = {'router': {'routes': [{'destination': '2.2.2.0/24',
+                                              'nexthop': '3.3.3.3'}]}}
+        with mock.patch('neutron.db.l3_db.L3_NAT_dbonly_mixin.'
+                        'get_router', return_value=self.fake_router),\
+            mock.patch('neutron.db.extraroute_db.ExtraRoute_dbonly_mixin.'
+                       'update_router', return_value=self.fake_router):
+            self.plugin.update_router(self.context, router_id, update_data)
+        self.plugin._ovn.add_static_route.assert_called_once_with(
+            'neutron-router-id',
+            ip_prefix='2.2.2.0/24', nexthop='3.3.3.3')
+        self.plugin._ovn.delete_static_route.assert_called_once_with(
+            'neutron-router-id',
+            ip_prefix='1.1.1.0/24', nexthop='2.2.2.3')
 
 
 class TestL3NatTestCase(test_l3_plugin.L3NatDBIntTestCase,
