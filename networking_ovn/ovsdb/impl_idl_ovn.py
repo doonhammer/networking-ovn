@@ -77,23 +77,74 @@ class OvsdbOvnIdl(ovn_api.API):
                                                ext_id[0], ext_id[1],
                                                if_exists)
 
-    def create_lservice(self, lservice_name, lswitch_name, may_exist=True,
-                     **columns):
-        return cmd.AddLogicalServiceCommand(self, lservice_name, lswitch_name,
-                                         may_exist, **columns)
+   def create_lport_chain(self, lport_chain_name, may_exist=True, **columns):
+        return cmd.AddLPortChainCommand(self, lport_chain_name,
+                                     may_exist, **columns)
 
-    def set_lservice(self, lservice_name, if_exists=True, **columns):
-        return cmd.SetLogicalServiceCommand(self, lservice_name,
+   def set_lport_chain(self, lport_chain_name, if_exists=True, **columns):
+        return cmd.SetLogicalPortChainCommand(self, lport_chain_name,
                                          if_exists, **columns)
 
-    def delete_lservice(self, lservice_name=None, lswitch=None,
+    def delete_lport_chain(self, lport_chain_name=None, ext_id=None, if_exists=True):
+        if lport_chain_name is not None:
+            return cmd.DelLPortChainCommand(self, lport_chain_name, if_exists)
+        else:
+            raise RuntimeError(_("Currently only supports delete "
+                                 "by lport-chain-name")) 
+
+    def create_lport_pair_group(self, lport_pair_group_name, lport_chain_name, may_exist=True,
+                     **columns):
+        return cmd.AddLogicalPortPairGroupCommand(self, lport_pair_group_name, lport_chain_name,
+                                         may_exist, **columns)
+
+    def set_lport_pair_group(self, lport_pair_group_name, if_exists=True, **columns):
+        return cmd.SetLogicalPortPairGroupCommand(self, lport_pair_group_name,
+                                         if_exists, **columns)
+
+    def delete_lport_pair_group(self, lport_pair_group_name=None, lport_chain=None,
                      ext_id=None, if_exists=True):
-        if lservice_name is not None:
-            return cmd.DelLogicalServiceCommand(self, lservice_name,
+        if lport_pair_group_name is not None:
+            return cmd.DelLogicalPortPairGroupCommand(self, lport_pair_group_name,
+                                             lport_chain, if_exists)
+        else:
+            raise RuntimeError(_("Currently only supports "
+                                 "delete by lport-pair-group-name"))
+
+    def create_lport_pair(self, lport_pair_name, lswitch_name, may_exist=True,
+                     **columns):
+        return cmd.AddLogicalPortPairCommand(self, lport_pair_name, lswitch_name,
+                                         may_exist, **columns)
+
+    def set_lport_pair(self, lport_pair_name, if_exists=True, **columns):
+        return cmd.SetLogicalPortPairCommand(self, lport_pair_name,
+                                         if_exists, **columns)
+
+    def delete_lport_pair(self, lport_pair_name=None, lswitch=None,
+                     ext_id=None, if_exists=True):
+        if lport_pair_name is not None:
+            return cmd.DelLogicalPortPairCommand(self, lport_pair_name,
                                              lswitch, if_exists)
         else:
             raise RuntimeError(_("Currently only supports "
-                                 "delete by lservice-name"))
+                                 "delete by lport-pair-name"))
+
+    def create_lflow_classifier(self, lflow_classifier_name, lswitch_name, may_exist=True,
+                     **columns):
+        return cmd.AddLogicalFlowClassifierCommand(self, lflow_classifier_name, lswitch_name,
+                                         may_exist, **columns)
+
+    def set_lflow_classifier(self, lflow_classifier_name, if_exists=True, **columns):
+        return cmd.SetLogicalFlowClassifierCommand(self, lflow_classifier_name,
+                                         if_exists, **columns)
+
+    def delete_lflow_classifier(self, lflow_classifier_name=None, lswitch=None,
+                     ext_id=None, if_exists=True):
+        if lflow_classifer_name is not None:
+            return cmd.DelLogicalFlowClassifierCommand(self, lflow_classifier_name,
+                                             lswitch, if_exists)
+        else:
+            raise RuntimeError(_("Currently only supports "
+                                 "delete by lflow-classifier-name"))
 
     def create_lport(self, lport_name, lswitch_name, may_exist=True,
                      **columns):

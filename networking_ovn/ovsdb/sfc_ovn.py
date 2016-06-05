@@ -38,6 +38,13 @@ from networking_ovn.ovsdb import impl_idl_ovn
 
 LOG = logging.getLogger(__name__)
 
+def sfc_name(id):
+    # The name of the OVN entry will be neutron-sfc-<UUID>
+    # This is due to the fact that the OVN application checks if the name
+    # is a UUID. If so then there will be no matches.
+    # We prefix the UUID to enable us to use the Neutron UUID when
+    # updating, deleting etc.
+    return 'neutron-sfc-%s' % id
 #
 # Check logical switch exists for network port
 #
@@ -74,9 +81,8 @@ def create_ovn_sfc(self, context, sfc_instance):
     port_pair_groups = sfc_instance['port_pair_groups']
     with self._ovn.transaction(check_error=True) as txn:
         txn.add(self._ovn.create_lflow_classifier(
-            lflow_classifier_name = 'sfc-%s' % flow_classifier['id'],
+            lflow_classifier_name = sfc_name(flow_classifier['id']),
             lswitch_name = lswitch_name,
-            name  = flow_classifier['name'],
             logical_destination_port = flow_classifier['logical_destination_port'],
             logical_source_port = flow_classifier['logical_source_port'],
             source_port_range_min = flow_classifier['source_port_range_min'], 

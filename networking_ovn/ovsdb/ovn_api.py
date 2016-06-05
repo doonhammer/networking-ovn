@@ -73,29 +73,27 @@ class API(object):
 
 
     @abc.abstractmethod
-    def create_lservice(self, name, lswitch_name, may_exist=True, **columns):
-        """Create a command to add an OVN lservice
+    def create_lport_chain(self, name, may_exist=True, **columns):
+        """Create a command to add a SFC port_chain
 
-        :param name:          The name of the lservice
+        :param name:          The name of the lport_chain
         :type name:           string
-        :param lswitch_name:  The name of the lswitch the lservice is created on
-        :type lswitch_name:   string
         :param may_exist:     Do not fail if lservice already exists
         :type may_exist:      bool
-        :param columns:       Dictionary of service columns
-                              Supported columns: app_port, in_port, out_port
+        :param columns:       Dictionary of lport_chain columns
+                              Supported columns: lflow_classifier, lport_pair_groups
         :type columns:        dictionary
         :returns:             :class:`Command` with no result
         """
 
     @abc.abstractmethod
-    def set_lservice(self, lservice_name, if_exists=True, **columns):
-        """Create a command to set OVN lservice fields
+    def set_lport_chain(self, lport_chain_name, if_exists=True, **columns):
+        """Create a command to set lport_chain columns
 
-        :param lservice_name:    The name of the lservice
-        :type lservice_name:     string
+        :param lport_chain_name:    The name of the lport_chain
+        :type lport_chain_name:     string
         :param columns:       Dictionary of service columns
-                              Supported columns: app_port, in_port, out_port
+                              Supported columns: flow_classifier, port_chain_groups
         :param if_exists:     Do not fail if lservice does not exist
         :type if_exists:      bool
         :type columns:        dictionary
@@ -103,17 +101,151 @@ class API(object):
         """
 
     @abc.abstractmethod
-    def delete_lservice(self, name=None, lswitch=None, ext_id=None,
+    def delete_lport_chain(self, name=None, ext_id=None,
                      if_exists=True):
-        """Create a command to delete an OVN lservice
+        """Create a command to delete a lport_chain
 
-        :param name:      The name of the lservice
+        :param name:      The name of the lport_chain
         :type name:       string
-        :param lswitch:   The name of the lswitch
-        :type lswitch:    string
         :param ext_id:    The external id of the lservice
         :type ext_id:     pair of <ext_id_key ,ext_id_value>
         :param if_exists: Do not fail if the lservice does not exists
+        :type if_exists:  bool
+        :returns:         :class:`Command` with no result
+        """
+
+ @abc.abstractmethod
+    def create_lport_pair_group(self, name, lport_chain_name, may_exist=True, **columns):
+        """Create a command to add a SFC port_chain
+
+        :param name:          The name of the lport_pair_group
+        :type name:           string
+        :param name:          The name of the lport_chain the group belongs to
+        :param may_exist:     Do not fail if lservice already exists
+        :type may_exist:      bool
+        :param columns:       Dictionary of lport_chain columns
+                              Supported columns: lport_pair
+        :type columns:        dictionary
+        :returns:             :class:`Command` with no result
+        """
+
+    @abc.abstractmethod
+    def set_lport_pair_group(self, lport_pair_group_name, if_exists=True, **columns):
+        """Create a command to set lport_pair_group columns
+
+        :param lport_pair_group_name:    The name of the lport_chain
+        :type lport_pair_group_name:     string
+        :param columns:       Dictionary of service columns
+                              Supported columns: port_pair
+        :param if_exists:     Do not fail if lport_pair_group does not exist
+        :type if_exists:      bool
+        :type columns:        dictionary
+        :returns:             :class:`Command` with no result
+        """
+
+    @abc.abstractmethod
+    def delete_lport_pair_group(self, name=None, lport_chain=None, ext_id=None,
+                     if_exists=True):
+        """Create a command to delete a lport_pair_group
+
+        :param name:      The name of the lport_pair_group
+        :type name:       string
+        :param lport_chain: Name of port_cahin containing port_pair_group
+        :type lport_chain: string
+        :param ext_id:    The external id of the lservice
+        :type ext_id:     pair of <ext_id_key ,ext_id_value>
+        :param if_exists: Do not fail if the lservice does not exists
+        :type if_exists:  bool
+        :returns:         :class:`Command` with no result
+        """
+
+    @abc.abstractmethod
+    def create_lport_pair(self, name, lswitch_name, may_exist=True, **columns):
+        """Create a command to add a lport_pair
+
+        :param name:          The name of the lport_pair
+        :type name:           string
+        :param lswitch_name:  The name of the lswitch the lport_pair is created on
+        :type lswitch_name:   string
+        :param may_exist:     Do not fail if lport_pair already exists
+        :type may_exist:      bool
+        :param columns:       Dictionary of port_pair columns
+                              Supported columns: lport_in, lport_out
+        :type columns:        dictionary
+        :returns:             :class:`Command` with no result
+        """
+
+    @abc.abstractmethod
+    def set_lport_pair(self, lport_pair_name, if_exists=True, **columns):
+        """Create a command to set lport_pair fields
+
+        :param lport_pair_name:    The name of the lport_pair
+        :type lport_name:     string
+        :param columns:       Dictionary of port columns
+                              Supported columns: lport_in, lport_out
+        :param if_exists:     Do not fail if lport_pair does not exist
+        :type if_exists:      bool
+        :type columns:        dictionary
+        :returns:             :class:`Command` with no result
+        """
+
+    @abc.abstractmethod
+    def delete_lport_pair(self, name=None, lswitch=None, ext_id=None,
+                     if_exists=True):
+        """Create a command to delete a lport_pair
+
+        :param name:      The name of the lport_pair
+        :type name:       string
+        :param lswitch:   The name of the lswitch
+        :type lswitch:    string
+        :param ext_id:    The external id of the lport
+        :type ext_id:     pair of <ext_id_key ,ext_id_value>
+        :param if_exists: Do not fail if the lport_pair does not exists
+        :type if_exists:  bool
+        :returns:         :class:`Command` with no result
+        """
+    @abc.abstractmethod
+    def create_lflow_classifier(self, name, lswitch_name, may_exist=True, **columns):
+        """Create a command to add a lflow_classifier
+
+        :param name:          The name of the lflow_classifier
+        :type name:           string
+        :param lswitch_name:  The name of the lswitch the lflow_classifier is created on
+        :type lswitch_name:   string
+        :param may_exist:     Do not fail if lflow_classifier already exists
+        :type may_exist:      bool
+        :param columns:       Dictionary of flow_classifier columns
+                              Supported columns: logical_source_port
+        :type columns:        dictionary
+        :returns:             :class:`Command` with no result
+        """
+
+    @abc.abstractmethod
+    def set_lflow_classifier(self, lflow_classifier_name, if_exists=True, **columns):
+        """Create a command to set lflow_classifier fields
+
+        :param lflow_classifier_name:    The name of the lflow_classifier
+        :type lflow_classifier_name:     string
+        :param columns:       Dictionary of flow_classifier columns
+                              Supported columns: classifier params
+        :param if_exists:     Do not fail if lflow_classifier does not exist
+        :type if_exists:      bool
+        :type columns:        dictionary
+        :returns:             :class:`Command` with no result
+        """
+
+    @abc.abstractmethod
+    def delete_lflow_classifier(self, name=None, lswitch=None, ext_id=None,
+                     if_exists=True):
+        """Create a command to delete a lflow_classifier
+
+        :param name:      The name of the lflow_classifier
+        :type name:       string
+        :param lswitch:   The name of the lswitch
+        :type lswitch:    string
+        :param ext_id:    The external id of the lflow_classifier
+        :type ext_id:     pair of <ext_id_key ,ext_id_value>
+        :param if_exists: Do not fail if the lflow_classifier does not exist
         :type if_exists:  bool
         :returns:         :class:`Command` with no result
         """

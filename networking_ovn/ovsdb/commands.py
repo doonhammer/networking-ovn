@@ -82,6 +82,142 @@ class LSwitchSetExternalIdCommand(BaseCommand):
         external_ids[self.field] = self.value
         lswitch.external_ids = external_ids
 
+class AddLPortChainCommand(BaseCommand):
+    def __init__(self, api, name, may_exist, **columns):
+        super(AddLPortChainCommand, self).__init__(api)
+        self.name = name
+        self.columns = columns
+        self.may_exist = may_exist
+
+    def run_idl(self, txn):
+        if self.may_exist:
+            lport_chain = idlutils.row_by_value(self.api.idl, 'Logical_Port_Chain',
+                                            'name', self.name, None)
+            if lport_chain:
+                return
+        row = txn.insert(self.api._tables['Logical_Port_Chain'])
+        row.name = self.name
+        for col, val in self.columns.items():
+            setattr(row, col, val)
+
+
+class DelLPortChainCommand(BaseCommand):
+    def __init__(self, api, name, if_exists):
+        super(DelLPortChainCommand, self).__init__(api)
+        self.name = name
+        self.if_exists = if_exists
+
+    def run_idl(self, txn):
+        try:
+            lswitch = idlutils.row_by_value(self.api.idl, 'Logical_Port_Chain',
+                                            'name', self.name)
+        except idlutils.RowNotFound:
+            if self.if_exists:
+                return
+            msg = _("Logical Port Chain %s does not exist") % self.name
+            raise RuntimeError(msg)
+
+        self.api._tables['Logical_Port_Chain'].rows[lport_chain.uuid].delete()
+
+class SetLogicalPortChainCommand(BaseCommand):
+    def __init__(self, api, lport_chain, if_exists, **columns):
+        super(SetLogicalPortChainCommand, self).__init__(api)
+        self.lport_chain = lport_chain
+        self.columns = columns
+        self.if_exists = if_exists
+
+    def run_idl(self, txn):
+        try:
+            port = idlutils.row_by_value(self.api.idl, 'Logical_Port_Chain',
+                                         'name', self.lport_chain)
+        except idlutils.RowNotFound:
+            if self.if_exists:
+                return
+            msg = _("Logical Port Chain %s does not exist") % self.lport_chain
+            raise RuntimeError(msg)
+
+        for col, val in self.columns.items():
+            setattr(port_chain, col, val)
+
+
+class AddLogicalPortPairGroupCommand(BaseCommand):
+    def __init__(self, api, lport_pair_group, lport_chain, may_exist, **columns):
+        super(AddLogicalPortPairGroupCommand, self).__init__(api)
+        self.lport_pair_group = lport_pair_group
+        self.lport_chain = lport_chain
+        self.may_exist = may_exist
+        self.columns = columns
+
+    def run_idl(self, txn):
+        try:
+            lport_chain = idlutils.row_by_value(self.api.idl, 'Logical_Port_Chain',
+                                                'name', self.lport_chain)
+            port_pair_groups = getattr(lport_chain, 'port_pair_groups', [])
+        except idlutils.RowNotFound:
+            msg = _("Logical Port Chain %s does not exist") % self.lport_chain
+            raise RuntimeError(msg)
+        if self.may_exist:
+            port_pair_group = idlutils.row_by_value(self.api.idl,
+                                         'Logical_Port_Pair_Group', 'name',
+                                         self.lport_pair_group, None)
+            if port_pair_group:
+                return
+
+        lport_chain.verify('port_pair_groups')
+
+        port_pair_group = txn.insert(self.api._tables['Logical_Port_Pair_Group'])
+        port_pair_group.name = self.lport_pair_group
+        for col, val in self.columns.items():
+            setattr(port_pair_group, col, val)
+        # add the newly created port_pair to existing lswitch
+        port_pair_groups.append(port_pair_group.uuid)
+        setattr(lport_pair_group, 'port_pair_groups', port_pair_groups)
+
+class SetLogicalPortPairGroupCommand(BaseCommand):
+    def __init__(self, api, lport_pair_group, if_exists, **columns):
+        super(SetLogicalPortPairGroupCommand, self).__init__(api)
+        self.lport_pair_group = lport_pair_group
+        self.columns = columns
+        self.if_exists = if_exists
+
+    def run_idl(self, txn):
+        try:
+            port_pair_group = idlutils.row_by_value(self.api.idl, 'Logical_Port_Pair_Group',
+                                                    'name', self.lport_pair_group)
+        except idlutils.RowNotFound:
+            if self.if_exists:
+                return
+            msg = _("Logical Port Pair Group %s does not exist") % self.lport_pair_group
+            raise RuntimeError(msg)
+
+        for col, val in self.columns.items():
+            setattr(port_pair_group, col, val)
+
+class DelLogicalPortPairGroupCommand(BaseCommand):
+    def __init__(self, api, lport_pair_group, lport_chain, if_exists):
+        super(DelLogicalPortPairGroupCommand, self).__init__(api)
+        self.lport_pair_group = lport_pair_group
+        self.lport_chain = lport_chain
+        self.if_exists = if_exists
+
+    def run_idl(self, txn):
+        try:
+            lport_pair_group = idlutils.row_by_value(self.api.idl, 'Logical_Port_Pair_Group',
+                                                     'name', self.lport_pair_group)
+            lport_chain = idlutils.row_by_value(self.api.idl, 'Logical_Port_Chain',
+                                            'name', self.lport_chain)
+            port_pair_groups = getattr(lport_chain, 'port_pair_groups', [])
+        except idlutils.RowNotFound:
+            if self.if_exists:
+                return
+            msg = _("Port Pair Group %s does not exist") % self.lport_pair_group
+            raise RuntimeError(msg)
+
+        lswitch.verify('port_pair_groups')
+
+        port_pair_groups.remove(lport_pair_group)
+        setattr(lport_chain, 'port_pair_groups', port_pair_groups)
+        self.api._tables['Logical_Port_Pair_Group'].rows[lport_pair_group.uuid].delete()
 
 class AddLogicalPortCommand(BaseCommand):
     def __init__(self, api, lport, lswitch, may_exist, **columns):
@@ -164,10 +300,10 @@ class DelLogicalPortCommand(BaseCommand):
         setattr(lswitch, 'ports', ports)
         self.api._tables['Logical_Port'].rows[lport.uuid].delete()
 
-class AddLogicalServiceCommand(BaseCommand):
-    def __init__(self, api, lservice, lswitch, may_exist, **columns):
-        super(AddLogicalServiceCommand, self).__init__(api)
-        self.lservice = lservice
+class AddLogicalPortPairCommand(BaseCommand):
+    def __init__(self, api, lport_pair, lswitch, may_exist, **columns):
+        super(AddLogicalPortPairCommand, self).__init__(api)
+        self.lport_pair = lport_pair
         self.lswitch = lswitch
         self.may_exist = may_exist
         self.columns = columns
@@ -176,72 +312,151 @@ class AddLogicalServiceCommand(BaseCommand):
         try:
             lswitch = idlutils.row_by_value(self.api.idl, 'Logical_Switch',
                                             'name', self.lswitch)
-            services= getattr(lswitch, 'services', [])
+            port_pair= getattr(lswitch, 'port-pairs', [])
         except idlutils.RowNotFound:
             msg = _("Logical Switch %s does not exist") % self.lswitch
             raise RuntimeError(msg)
         if self.may_exist:
-            service = idlutils.row_by_value(self.api.idl,
-                                         'Logical_Service', 'name',
-                                         self.lservice, None)
-            if service:
+            port_pair = idlutils.row_by_value(self.api.idl,
+                                         'Logical_Port_Pair', 'name',
+                                         self.lport_pair, None)
+            if port_pair:
                 return
 
-        lswitch.verify('services')
+        lswitch.verify('port_pairs')
 
-        service = txn.insert(self.api._tables['Logical_Service'])
-        service.name = self.lservice
+        port_pair = txn.insert(self.api._tables['Logical_Port_Pair'])
+        port_pair.name = self.lport_pair
         for col, val in self.columns.items():
-            setattr(service, col, val)
-        # add the newly created service to existing lswitch
-        services.append(service.uuid)
-        setattr(lswitch, 'services', services)
+            setattr(port_pair, col, val)
+        # add the newly created port_pair to existing lswitch
+        port_pairs.append(port_pair.uuid)
+        setattr(lport_pair, 'port_pairs', port_pairs)
 
-class SetLogicalServiceCommand(BaseCommand):
-    def __init__(self, api, lservice, if_exists, **columns):
-        super(SetLogicalServiceCommand, self).__init__(api)
-        self.lservice = lservice
+class SetLogicalPortPairCommand(BaseCommand):
+    def __init__(self, api, lport_pair, if_exists, **columns):
+        super(SetLogicalPortPairCommand, self).__init__(api)
+        self.lport_pair = lport_pair
         self.columns = columns
         self.if_exists = if_exists
 
     def run_idl(self, txn):
         try:
-            service = idlutils.row_by_value(self.api.idl, 'Logical_Service',
-                                            'name', self.lservice)
+            port_pair = idlutils.row_by_value(self.api.idl, 'Logical_Port_Pair',
+                                              'name', self.lport_pair)
         except idlutils.RowNotFound:
             if self.if_exists:
                 return
-            msg = _("Logical Service %s does not exist") % self.lservice
+            msg = _("Logical Port Pair%s does not exist") % self.lport_pair
             raise RuntimeError(msg)
 
         for col, val in self.columns.items():
-            setattr(service, col, val)
+            setattr(port_pair, col, val)
 
-class DelLogicalServiceCommand(BaseCommand):
-    def __init__(self, api, lservice, lswitch, if_exists):
-        super(DelLogicalServiceCommand, self).__init__(api)
-        self.lservice = lservice
+class DelLogicalPortPairCommand(BaseCommand):
+    def __init__(self, api, lport_pair, lswitch, if_exists):
+        super(DelLogicalPortPairCommand, self).__init__(api)
+        self.lport_pair = lport_pair
         self.lswitch = lswitch
         self.if_exists = if_exists
 
     def run_idl(self, txn):
         try:
-            lservice = idlutils.row_by_value(self.api.idl, 'Logical_Service',
-                                             'name', self.lservice)
+            lport_pair = idlutils.row_by_value(self.api.idl, 'Logical_Port_Pair',
+                                               'name', self.lport_pair)
             lswitch = idlutils.row_by_value(self.api.idl, 'Logical_Switch',
                                             'name', self.lswitch)
-            services = getattr(lswitch, 'services', [])
+            port_pairs = getattr(lswitch, 'port_pairs', [])
         except idlutils.RowNotFound:
             if self.if_exists:
                 return
-            msg = _("Service %s does not exist") % self.lservice
+            msg = _("Port Pair %s does not exist") % self.lport_pair
             raise RuntimeError(msg)
 
-        lswitch.verify('services')
+        lswitch.verify('port_pairs')
 
-        services.remove(lservice)
-        setattr(lswitch, 'services', services)
-        self.api._tables['Logical_Service'].rows[lservice.uuid].delete()
+        port_pairs.remove(lport_pair)
+        setattr(lswitch, 'port_pairs', port_pairs)
+        self.api._tables['Logical_Port_Pair'].rows[lport_pair.uuid].delete()
+
+class AddLogicalFlowClassifierCommand(BaseCommand):
+    def __init__(self, api, lflow_classifier, lswitch, may_exist, **columns):
+        super(AddLogicalFlowClassifierCommand, self).__init__(api)
+        self.lflow_classifier = lflow_classifier
+        self.lswitch = lswitch
+        self.may_exist = may_exist
+        self.columns = columns
+
+    def run_idl(self, txn):
+        try:
+            lswitch = idlutils.row_by_value(self.api.idl, 'Logical_Switch',
+                                            'name', self.lswitch)
+            flow_classifiers = getattr(lswitch, 'flow-classifiers', [])
+        except idlutils.RowNotFound:
+            msg = _("Logical Switch %s does not exist") % self.lswitch
+            raise RuntimeError(msg)
+        if self.may_exist:
+            flow_classifier = idlutils.row_by_value(self.api.idl,
+                                         'Logical_Flow_Classifier', 'name',
+                                         self.lflow_classifier, None)
+            if flow_classifier:
+                return
+
+        lswitch.verify('flow_classifiers')
+
+        flow_classifier = txn.insert(self.api._tables['Logical_Flow_Classifier'])
+        flow_classifier.name = self.lflow_classifier
+        for col, val in self.columns.items():
+            setattr(flow_classifier, col, val)
+        # add the newly created flow_classifier to existing lswitch
+        flow_classifiers.append(flow_classifier.uuid)
+        setattr(lflow_classifier, 'flow_classifiers', flow_classifiers)
+
+class SetLogicalFlowClassifierCommand(BaseCommand):
+    def __init__(self, api, lflow_classifier, if_exists, **columns):
+        super(SetLogicalFlowCLassifierCommand, self).__init__(api)
+        self.lflow_classifier = lflow_classifier
+        self.columns = columns
+        self.if_exists = if_exists
+
+    def run_idl(self, txn):
+        try:
+            flow_classifier = idlutils.row_by_value(self.api.idl, 'Logical_Flow_Classifier',
+                                              'name', self.lflow_classifier)
+        except idlutils.RowNotFound:
+            if self.if_exists:
+                return
+            msg = _("Logical Flow Classifier %s does not exist") % self.lflow_classifier
+            raise RuntimeError(msg)
+
+        for col, val in self.columns.items():
+            setattr(flow_classifier, col, val)
+
+class DelLogicalFlowClassifierCommand(BaseCommand):
+    def __init__(self, api, lflow_classifier, lswitch, if_exists):
+        super(DelLogicalFlowClassifierCommand, self).__init__(api)
+        self.lflow_classifier = lflow_classifier
+        self.lswitch = lswitch
+        self.if_exists = if_exists
+
+    def run_idl(self, txn):
+        try:
+            lflow_classifier = idlutils.row_by_value(self.api.idl, 'Logical_Flow_Classifier',
+                                                     'name', self.lflow_classifier)
+            lswitch = idlutils.row_by_value(self.api.idl, 'Logical_Switch',
+                                            'name', self.lswitch)
+            flow_classifiers = getattr(lswitch, 'flow_classifiers', [])
+        except idlutils.RowNotFound:
+            if self.if_exists:
+                return
+            msg = _("Flow CLassifier %s does not exist") % self.lflow_classifier
+            raise RuntimeError(msg)
+
+        lswitch.verify('flow_classifiers')
+
+        flow_classifiers.remove(lflow_classifier)
+        setattr(lswitch, 'flow_classifiers', flow_classifiers)
+        self.api._tables['Logical_Flow_Classifier'].rows[lflow_classifier.uuid].delete()
 
 class AddLRouterCommand(BaseCommand):
     def __init__(self, api, name, may_exist, **columns):
