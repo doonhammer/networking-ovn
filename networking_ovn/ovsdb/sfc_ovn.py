@@ -72,7 +72,7 @@ def check_lswitch_exists(self, context, port_id):
 # Interface into OVN - adds new rules to direct
 # traffic to VNF port-pair
 #
-def create_ovn_sfc(self, context, sfc_instance):
+def create_ovn_sfc(self, sfc_instance):
     status = True
     #
     # Create Port Chain in OVN

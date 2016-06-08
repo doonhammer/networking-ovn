@@ -77,11 +77,11 @@ class OvsdbOvnIdl(ovn_api.API):
                                                ext_id[0], ext_id[1],
                                                if_exists)
 
-   def create_lport_chain(self, lport_chain_name, may_exist=True, **columns):
+    def create_lport_chain(self, lport_chain_name, may_exist=True, **columns):
         return cmd.AddLPortChainCommand(self, lport_chain_name,
                                      may_exist, **columns)
 
-   def set_lport_chain(self, lport_chain_name, if_exists=True, **columns):
+    def set_lport_chain(self, lport_chain_name, if_exists=True, **columns):
         return cmd.SetLogicalPortChainCommand(self, lport_chain_name,
                                          if_exists, **columns)
 

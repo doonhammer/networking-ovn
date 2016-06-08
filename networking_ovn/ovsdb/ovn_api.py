@@ -114,7 +114,7 @@ class API(object):
         :returns:         :class:`Command` with no result
         """
 
- @abc.abstractmethod
+    @abc.abstractmethod
     def create_lport_pair_group(self, name, lport_chain_name, may_exist=True, **columns):
         """Create a command to add a SFC port_chain
 
@@ -150,7 +150,7 @@ class API(object):
 
         :param name:      The name of the lport_pair_group
         :type name:       string
-        :param lport_chain: Name of port_cahin containing port_pair_group
+        :param lport_chain: Name of port_chain containing port_pair_group
         :type lport_chain: string
         :param ext_id:    The external id of the lservice
         :type ext_id:     pair of <ext_id_key ,ext_id_value>
