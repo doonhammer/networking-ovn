@@ -137,7 +137,7 @@ class SetLogicalPortChainCommand(BaseCommand):
             raise RuntimeError(msg)
 
         for col, val in self.columns.items():
-            setattr(port_chain, col, val)
+            setattr(lport_chain, col, val)
 
 
 class AddLogicalPortPairGroupCommand(BaseCommand):
@@ -331,7 +331,7 @@ class AddLogicalPortPairCommand(BaseCommand):
             setattr(port_pair, col, val)
         # add the newly created port_pair to existing lswitch
         port_pairs.append(port_pair.uuid)
-        setattr(lport_pair, 'port_pairs', port_pairs)
+        setattr(lswitch, 'port_pairs', port_pairs)
 
 class SetLogicalPortPairCommand(BaseCommand):
     def __init__(self, api, lport_pair, if_exists, **columns):
@@ -410,7 +410,7 @@ class AddLogicalFlowClassifierCommand(BaseCommand):
             setattr(flow_classifier, col, val)
         # add the newly created flow_classifier to existing lswitch
         flow_classifiers.append(flow_classifier.uuid)
-        setattr(lflow_classifier, 'flow_classifiers', flow_classifiers)
+        setattr(lswitch, 'flow_classifiers', flow_classifiers)
 
 class SetLogicalFlowClassifierCommand(BaseCommand):
     def __init__(self, api, lflow_classifier, if_exists, **columns):
