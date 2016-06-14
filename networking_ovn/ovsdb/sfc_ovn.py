@@ -89,10 +89,9 @@ def create_ovn_sfc(self, sfc_instance):
     flow_classifier_name = sfc_name(flow_classifier['id'])
     with self._ovn.transaction(check_error=True) as txn:
         txn.add(self._ovn.create_lflow_classifier(
-            lflow_classifier_name = lflow_classifier_name),
+            lflow_classifier_name = lflow_classifier_name,
             lswitch_name = lswitch_name,
-            logical_source_port = flow_classifier['logical_source_port']
-            ))
+            logical_source_port = flow_classifier['logical_source_port']))
     #
     # TODO: Create individual setters for valid parameters
  
