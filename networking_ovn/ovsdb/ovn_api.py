@@ -209,13 +209,14 @@ class API(object):
         :returns:         :class:`Command` with no result
         """
     @abc.abstractmethod
-    def create_lflow_classifier(self, name, lswitch_name, may_exist=True, **columns):
+    def create_lflow_classifier(self, lport_chain_name, lflow_classifier_name,
+                                may_exist=True, **columns):
         """Create a command to add a lflow_classifier
 
-        :param name:          The name of the lflow_classifier
-        :type name:           string
-        :param lswitch_name:  The name of the lswitch the lflow_classifier is created on
-        :type lswitch_name:   string
+        :param lport_chain_name:      The name of the lport_chain
+        :type lport_chain_name:       string
+        :param lflow_classifier_name: The name of the lflow_classifier
+        :type lflow_classifier_name:  string
         :param may_exist:     Do not fail if lflow_classifier already exists
         :type may_exist:      bool
         :param columns:       Dictionary of flow_classifier columns
@@ -237,18 +238,16 @@ class API(object):
         :type columns:        dictionary
         :returns:             :class:`Command` with no result
         """
-
+    
     @abc.abstractmethod
-    def delete_lflow_classifier(self, name=None, lswitch=None, ext_id=None,
-                     if_exists=True):
+    def delete_lflow_classifier(self, lport_chain_name, lflow_classifier_name=None,
+                                if_exists=True):
         """Create a command to delete a lflow_classifier
 
-        :param name:      The name of the lflow_classifier
-        :type name:       string
-        :param lswitch:   The name of the lswitch
-        :type lswitch:    string
-        :param ext_id:    The external id of the lflow_classifier
-        :type ext_id:     pair of <ext_id_key ,ext_id_value>
+        :param lport_chain_name:      The name of the lport_chain
+        :type lport_chain_name:       string
+        :param lflow_classifier_name: The name of the lflow_classifier
+        :type lflow_classifier_name:  string
         :param if_exists: Do not fail if the lflow_classifier does not exist
         :type if_exists:  bool
         :returns:         :class:`Command` with no result

@@ -410,36 +410,38 @@ class DelLogicalPortPairCommand(BaseCommand):
         self.api._tables['Logical_Port_Pair'].rows[lport_pair.uuid].delete()
 
 class AddLogicalFlowClassifierCommand(BaseCommand):
-    def __init__(self, api, lflow_classifier, lswitch, may_exist, **columns):
+    def __init__(self, api, lport_chain, lflow_classifier, may_exist,
+                  **columns):
         super(AddLogicalFlowClassifierCommand, self).__init__(api)
+        self.lport_chain = lport_chain
         self.lflow_classifier = lflow_classifier
-        self.lswitch = lswitch
         self.may_exist = may_exist
         self.columns = columns
 
     def run_idl(self, txn):
         try:
-            lswitch = idlutils.row_by_value(self.api.idl, 'Logical_Switch',
-                                            'name', self.lswitch)
-            flow_classifiers = getattr(lswitch, 'flow-classifiers', [])
+            port_chain = idlutils.row_by_value(self.api.idl,
+                                                'Logical_Port_Chain',
+                                                'name', self.lport_chain)
+            fc = getattr(port_chain, 'flow_classifier', [])
         except idlutils.RowNotFound:
-            msg = _("Logical Switch %s does not exist") % self.lswitch
+            msg = _("Logical port chain %s does not exist") % self.lport_chain
             raise RuntimeError(msg)
         if self.may_exist:
-            flow_classifier = idlutils.row_by_value(self.api.idl,
-                                         'Logical_Flow_Classifier', 'name',
-                                         self.lflow_classifier, None)
+            flow_classifier = idlutils.row_by_value(
+                self.api.idl, 'Logical_Flow_Classifier', 'name',
+                self.lflow_classifier, None)
             if flow_classifier:
                 return
-        lswitch.verify('flow_classifiers')
+        port_chain.verify('flow_classifier')
 
         flow_classifier = txn.insert(self.api._tables['Logical_Flow_Classifier'])
         flow_classifier.name = self.lflow_classifier
         for col, val in self.columns.items():
             setattr(flow_classifier, col, val)
         # add the newly created flow_classifier to existing lswitch
-        flow_classifiers.append(flow_classifier.uuid)
-        setattr(lswitch, 'flow_classifiers', flow_classifiers)
+        fc.append(flow_classifier.uuid)
+        setattr(port_chain, 'flow_classifier', fc)
 
 class SetLogicalFlowClassifierCommand(BaseCommand):
     def __init__(self, api, lflow_classifier, if_exists, **columns):
@@ -462,29 +464,29 @@ class SetLogicalFlowClassifierCommand(BaseCommand):
             setattr(flow_classifier, col, val)
 
 class DelLogicalFlowClassifierCommand(BaseCommand):
-    def __init__(self, api, lflow_classifier, lswitch, if_exists):
+    def __init__(self, api, lport_chain, lflow_classifier, if_exists):
         super(DelLogicalFlowClassifierCommand, self).__init__(api)
         self.lflow_classifier = lflow_classifier
-        self.lswitch = lswitch
+        self.lport_chain = lport_chain
         self.if_exists = if_exists
 
     def run_idl(self, txn):
         try:
             lflow_classifier = idlutils.row_by_value(self.api.idl, 'Logical_Flow_Classifier',
                                                      'name', self.lflow_classifier)
-            lswitch = idlutils.row_by_value(self.api.idl, 'Logical_Switch',
-                                            'name', self.lswitch)
-            flow_classifiers = getattr(lswitch, 'flow_classifiers', [])
+            port_chain = idlutils.row_by_value(self.api.idl, 'Logical_Port_Chain',
+                                            'name', self.lport_chain)
+            flow_classifier = getattr(port_chain, 'flow_classifier', [])
         except idlutils.RowNotFound:
             if self.if_exists:
                 return
-            msg = _("Flow CLassifier %s does not exist") % self.lflow_classifier
+            msg = _("Flow Classifier %s does not exist") % self.lflow_classifier
             raise RuntimeError(msg)
 
-        lswitch.verify('flow_classifiers')
+        port_chain.verify('flow_classifier')
 
-        flow_classifiers.remove(lflow_classifier)
-        setattr(lswitch, 'flow_classifiers', flow_classifiers)
+        port_chain.remove(lflow_classifier)
+        setattr(port_chain, 'flow_classifier', flow_classifier)
         self.api._tables['Logical_Flow_Classifier'].rows[lflow_classifier.uuid].delete()
 
 class AddLRouterCommand(BaseCommand):

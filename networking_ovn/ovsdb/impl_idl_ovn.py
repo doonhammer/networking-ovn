@@ -131,20 +131,22 @@ class OvsdbOvnIdl(ovn_api.API):
             raise RuntimeError(_("Currently only supports "
                                  "delete by lport-pair-name"))
 
-    def create_lflow_classifier(self, lflow_classifier_name, lswitch_name, may_exist=True,
-                     **columns):
-        return cmd.AddLogicalFlowClassifierCommand(self, lflow_classifier_name, lswitch_name,
-                                         may_exist, **columns)
+    def create_lflow_classifier(self, lport_chain_name, lflow_classifier_name,
+                                may_exist=True, **columns):
+        return cmd.AddLogicalFlowClassifierCommand(self, lport_chain_name, 
+                                                   lflow_classifier_name,
+                                                   may_exist, **columns)
 
     def set_lflow_classifier(self, lflow_classifier_name, if_exists=True, **columns):
         return cmd.SetLogicalFlowClassifierCommand(self, lflow_classifier_name,
                                          if_exists, **columns)
 
-    def delete_lflow_classifier(self, lflow_classifier_name=None, lswitch=None,
-                     ext_id=None, if_exists=True):
+    def delete_lflow_classifier(self, lport_chain_name, lflow_classifier_name=None,
+                                if_exists=True):
         if lflow_classifer_name is not None:
-            return cmd.DelLogicalFlowClassifierCommand(self, lflow_classifier_name,
-                                             lswitch, if_exists)
+            return cmd.DelLogicalFlowClassifierCommand(self, lport_chain_name,
+                                                       lflow_classifier_name,
+                                                       if_exists)
         else:
             raise RuntimeError(_("Currently only supports "
                                  "delete by lflow-classifier-name"))
