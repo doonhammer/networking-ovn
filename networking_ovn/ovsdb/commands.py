@@ -18,7 +18,6 @@ from neutron.agent.ovsdb.native import idlutils
 from networking_ovn._i18n import _
 from networking_ovn.common import utils
 
-
 class AddLSwitchCommand(BaseCommand):
     def __init__(self, api, name, may_exist, **columns):
         super(AddLSwitchCommand, self).__init__(api)
@@ -322,7 +321,7 @@ class AddLogicalPortPairCommand(BaseCommand):
         try:
             lswitch = idlutils.row_by_value(self.api.idl, 'Logical_Switch',
                                             'name', self.lswitch)
-            port_pairs= getattr(lswitch, 'port-pairs', [])
+            port_pairs = getattr(lswitch, 'port-pairs', [])
         except idlutils.RowNotFound:
             msg = _("Logical Switch %s does not exist") % self.lswitch
             raise RuntimeError(msg)
@@ -411,7 +410,6 @@ class AddLogicalFlowClassifierCommand(BaseCommand):
                                          self.lflow_classifier, None)
             if flow_classifier:
                 return
-
         lswitch.verify('flow_classifiers')
 
         flow_classifier = txn.insert(self.api._tables['Logical_Flow_Classifier'])
