@@ -73,7 +73,8 @@ class API(object):
 
 
     @abc.abstractmethod
-    def create_lport_chain(self, name, may_exist=True, **columns):
+    def create_lport_chain(self, name, may_exist=True):
+#    def create_lport_chain(self, name, may_exist=True, **columns):
         """Create a command to add a SFC port_chain
 
         :param name:          The name of the lport_chain
@@ -144,7 +145,7 @@ class API(object):
         """
 
     @abc.abstractmethod
-    def delete_lport_pair_group(self, name=None, lport_chain=None, ext_id=None,
+    def delete_lport_pair_group(self, name=None, lport_chain_name=None, ext_id=None,
                      if_exists=True):
         """Create a command to delete a lport_pair_group
 
@@ -190,7 +191,7 @@ class API(object):
         """
 
     @abc.abstractmethod
-    def delete_lport_pair(self, name=None, lswitch=None, ext_id=None,
+    def delete_lport_pair(self, name=None, lswitch_name=None, ext_id=None,
                      if_exists=True):
         """Create a command to delete a lport_pair
 

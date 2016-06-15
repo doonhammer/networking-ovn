@@ -83,10 +83,11 @@ class LSwitchSetExternalIdCommand(BaseCommand):
         lswitch.external_ids = external_ids
 
 class AddLPortChainCommand(BaseCommand):
-    def __init__(self, api, name, may_exist, **columns):
+#    def __init__(self, api, name, may_exist, **columns):
+    def __init__(self, api, name, may_exist):
         super(AddLPortChainCommand, self).__init__(api)
         self.name = name
-        self.columns = columns
+#        self.columns = columns
         self.may_exist = may_exist
 
     def run_idl(self, txn):
@@ -97,8 +98,8 @@ class AddLPortChainCommand(BaseCommand):
                 return
         row = txn.insert(self.api._tables['Logical_Port_Chain'])
         row.name = self.name
-        for col, val in self.columns.items():
-            setattr(row, col, val)
+#        for col, val in self.columns.items():
+#            setattr(row, col, val)
 
 
 class DelLPortChainCommand(BaseCommand):
@@ -128,7 +129,7 @@ class SetLogicalPortChainCommand(BaseCommand):
 
     def run_idl(self, txn):
         try:
-            port = idlutils.row_by_value(self.api.idl, 'Logical_Port_Chain',
+            lport_chain = idlutils.row_by_value(self.api.idl, 'Logical_Port_Chain',
                                          'name', self.lport_chain)
         except idlutils.RowNotFound:
             if self.if_exists:
@@ -152,7 +153,7 @@ class AddLogicalPortPairGroupCommand(BaseCommand):
         try:
             lport_chain = idlutils.row_by_value(self.api.idl, 'Logical_Port_Chain',
                                                 'name', self.lport_chain)
-            port_pair_groups = getattr(lport_chain, 'port_pair_groups', [])
+            port_pair_groups = getattr(self.lport_chain, 'port_pair_groups', [])
         except idlutils.RowNotFound:
             msg = _("Logical Port Chain %s does not exist") % self.lport_chain
             raise RuntimeError(msg)
@@ -171,27 +172,36 @@ class AddLogicalPortPairGroupCommand(BaseCommand):
             setattr(port_pair_group, col, val)
         # add the newly created port_pair to existing lswitch
         port_pair_groups.append(port_pair_group.uuid)
-        setattr(lport_pair_group, 'port_pair_groups', port_pair_groups)
+        setattr(lport_chain, 'port_pair_groups', port_pair_groups)
 
 class SetLogicalPortPairGroupCommand(BaseCommand):
-    def __init__(self, api, lport_pair_group, if_exists, **columns):
+    def __init__(self, api, lport_pair_group, lport_pair, if_exists):
         super(SetLogicalPortPairGroupCommand, self).__init__(api)
         self.lport_pair_group = lport_pair_group
-        self.columns = columns
+        self.lport_pair = lport_pair
         self.if_exists = if_exists
 
     def run_idl(self, txn):
         try:
             port_pair_group = idlutils.row_by_value(self.api.idl, 'Logical_Port_Pair_Group',
                                                     'name', self.lport_pair_group)
+            port_pairs = getattr(self.lport_pair_group,'port_pairs', [])
         except idlutils.RowNotFound:
             if self.if_exists:
                 return
             msg = _("Logical Port Pair Group %s does not exist") % self.lport_pair_group
             raise RuntimeError(msg)
+        try:
+            port_pair = idlutils.row_by_value(self.api.idl, 'Logical_Port_Pair',
+                                                    'name', self.lport_pair)
+        except idlutils.RowNotFound:
+            if self.if_exists:
+                return
+            msg = _("Logical Port Pair %s does not exist") % self.lport_pair
+            raise RuntimeError(msg)
 
-        for col, val in self.columns.items():
-            setattr(port_pair_group, col, val)
+        port_pairs.append(port_pair.uuid)
+        setattr(port_pair_group, "port_pairs", port_pairs)
 
 class DelLogicalPortPairGroupCommand(BaseCommand):
     def __init__(self, api, lport_pair_group, lport_chain, if_exists):
@@ -312,7 +322,7 @@ class AddLogicalPortPairCommand(BaseCommand):
         try:
             lswitch = idlutils.row_by_value(self.api.idl, 'Logical_Switch',
                                             'name', self.lswitch)
-            port_pair= getattr(lswitch, 'port-pairs', [])
+            port_pairs= getattr(lswitch, 'port-pairs', [])
         except idlutils.RowNotFound:
             msg = _("Logical Switch %s does not exist") % self.lswitch
             raise RuntimeError(msg)
