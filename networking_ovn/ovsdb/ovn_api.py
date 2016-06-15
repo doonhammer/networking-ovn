@@ -73,18 +73,21 @@ class API(object):
 
 
     @abc.abstractmethod
-    def create_lport_chain(self, name, may_exist=True):
-#    def create_lport_chain(self, name, may_exist=True, **columns):
+    def create_lport_chain(self, lswitch_name, lport_chain_name,
+                           may_exist=True, **columns):
         """Create a command to add a SFC port_chain
 
-        :param name:          The name of the lport_chain
-        :type name:           string
-        :param may_exist:     Do not fail if lservice already exists
-        :type may_exist:      bool
-        :param columns:       Dictionary of lport_chain columns
-                              Supported columns: lflow_classifier, lport_pair_groups
-        :type columns:        dictionary
-        :returns:             :class:`Command` with no result
+        :param lswitch_name:     The name of the logical switch
+        :type lswitch_name:      string
+        :param lport_chain_name: The name of logical port chain
+        :type lport_chain_name:  string
+        :param may_exist:        Do not fail if lservice already exists
+        :type may_exist:         bool
+        :param columns:          Dictionary of lport_chain columns
+                                 Supported columns: lflow_classifier, 
+                                 lport_pair_groups, external_ids
+        :type columns:           dictionary
+        :returns:                :class:`Command` with no result
         """
 
     @abc.abstractmethod
@@ -102,14 +105,14 @@ class API(object):
         """
 
     @abc.abstractmethod
-    def delete_lport_chain(self, name=None, ext_id=None,
-                     if_exists=True):
+    def delete_lport_chain(self, lswitch_name, lport_chain_name=None,
+                           if_exists=True):
         """Create a command to delete a lport_chain
 
-        :param name:      The name of the lport_chain
-        :type name:       string
-        :param ext_id:    The external id of the lservice
-        :type ext_id:     pair of <ext_id_key ,ext_id_value>
+        :param lswitch_name:       The name of the logical switch
+        :type lswitch_name:        string
+        :param lport_chain_name:   The name of the lport_chain
+        :type lport_chain_name:    string
         :param if_exists: Do not fail if the lservice does not exists
         :type if_exists:  bool
         :returns:         :class:`Command` with no result

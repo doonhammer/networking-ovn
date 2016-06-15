@@ -82,42 +82,63 @@ class LSwitchSetExternalIdCommand(BaseCommand):
         lswitch.external_ids = external_ids
 
 class AddLPortChainCommand(BaseCommand):
-#    def __init__(self, api, name, may_exist, **columns):
-    def __init__(self, api, name, may_exist):
+    def __init__(self, api, lswitch, lport_chain, may_exist, **columns):
         super(AddLPortChainCommand, self).__init__(api)
-        self.name = name
-#        self.columns = columns
+        self.lport_chain = lport_chain
+        self.lswitch = lswitch
         self.may_exist = may_exist
+        self.columns = columns
 
     def run_idl(self, txn):
+        try:
+            lswitch = idlutils.row_by_value(self.api.idl, 'Logical_Switch',
+                                            'name', self.lswitch)
+            port_chains = getattr(lswitch, 'port_chains', [])
+
+        except idlutils.RowNotFound:
+            msg = _("Logical Switch %s does not exist") % self.lswitch
+            raise RuntimeError(msg)
         if self.may_exist:
-            lport_chain = idlutils.row_by_value(self.api.idl, 'Logical_Port_Chain',
-                                            'name', self.name, None)
-            if lport_chain:
+            port_chain = idlutils.row_by_value(self.api.idl,
+                                               'Logical_Port_Chain', 'name',
+                                               self.lport_chain, None)
+            if port_chain:
                 return
-        row = txn.insert(self.api._tables['Logical_Port_Chain'])
-        row.name = self.name
-#        for col, val in self.columns.items():
-#            setattr(row, col, val)
+        lswitch.verify('port_chains')
+        port_chain = txn.insert(self.api._tables['Logical_Port_Chain'])
+        port_chain.name = self.lport_chain
+        for col, val in self.columns.items():
+            setattr(port_chain, col, val)
+        port_chains.append(port_chain.uuid)
+        setattr(lswitch, 'port_chains', port_chains)
 
 
 class DelLPortChainCommand(BaseCommand):
-    def __init__(self, api, name, if_exists):
+    def __init__(self, api, lswitch, lport_chain, if_exists):
         super(DelLPortChainCommand, self).__init__(api)
-        self.name = name
+        self.lswitch = lswitch
+        self.lport_chain = lport_chain
         self.if_exists = if_exists
 
     def run_idl(self, txn):
         try:
-            lswitch = idlutils.row_by_value(self.api.idl, 'Logical_Port_Chain',
-                                            'name', self.name)
+            lport_chain = idlutils.row_by_value(self.api.idl,
+                                                'Logical_Port_Chain',
+                                                'name', self.lport_chain)
+            lswitch = idlutils.row_by_value(self.api.idl, 'Logical_Switch',
+                                            'name', self.lswitch)
+            port_chains = getattr(lswitch, 'port_chains', [])
         except idlutils.RowNotFound:
             if self.if_exists:
                 return
-            msg = _("Logical Port Chain %s does not exist") % self.name
+            msg = _("Logical Port Chain %s does not exist") % self.lport_chain
             raise RuntimeError(msg)
+        lswitch.verify('port_chains')
 
+        port_chains.remove(lport_chain)
+        setattr(lswitch, 'port_chains', port_chains)
         self.api._tables['Logical_Port_Chain'].rows[lport_chain.uuid].delete()
+
 
 class SetLogicalPortChainCommand(BaseCommand):
     def __init__(self, api, lport_chain, if_exists, **columns):

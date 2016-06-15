@@ -77,21 +77,20 @@ class OvsdbOvnIdl(ovn_api.API):
                                                ext_id[0], ext_id[1],
                                                if_exists)
 
-#    def create_lport_chain(self, lport_chain_name, may_exist=True, **columns):
-#        return cmd.AddLPortChainCommand(self, lport_chain_name,
-#                                     may_exist, **columns)
-
-    def create_lport_chain(self, lport_chain_name, may_exist=True):
-        return cmd.AddLPortChainCommand(self, lport_chain_name,
-                                     may_exist)
+    def create_lport_chain(self, lswitch_name, lport_chain_name,
+                           may_exist=True, **columns):
+        return cmd.AddLPortChainCommand(self, lswitch_name, lport_chain_name,
+                                        may_exist, **columns)
 
     def set_lport_chain(self, lport_chain_name, if_exists=True, **columns):
         return cmd.SetLogicalPortChainCommand(self, lport_chain_name,
-                                         if_exists, **columns)
+                                              if_exists, **columns)
 
-    def delete_lport_chain(self, lport_chain_name=None, ext_id=None, if_exists=True):
+    def delete_lport_chain(self, lswitch_name, lport_chain_name=None,
+                           if_exists=True):
         if lport_chain_name is not None:
-            return cmd.DelLPortChainCommand(self, lport_chain_name, if_exists)
+            return cmd.DelLPortChainCommand(self, lswitch_name, lport_chain_name,
+                                            if_exists)
         else:
             raise RuntimeError(_("Currently only supports delete "
                                  "by lport-chain-name")) 
