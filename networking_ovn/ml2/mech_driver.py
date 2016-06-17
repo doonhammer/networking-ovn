@@ -677,5 +677,3 @@ class OVNMechanismDriver(driver_api.MechanismDriver):
         self._plugin.update_port_status(n_context.get_admin_context(),
                                         port_id,
                                         const.PORT_STATUS_DOWN)
-
-  
