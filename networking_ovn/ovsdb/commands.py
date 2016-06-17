@@ -360,7 +360,7 @@ class AddLogicalPortPairCommand(BaseCommand):
         try:
             lswitch = idlutils.row_by_value(self.api.idl, 'Logical_Switch',
                                             'name', self.lswitch)
-            port_pairs = getattr(lswitch, 'port-pairs', [])
+            port_pairs = getattr(lswitch, 'port_pairs', [])
         except idlutils.RowNotFound:
             msg = _("Logical Switch %s does not exist") % self.lswitch
             raise RuntimeError(msg)
