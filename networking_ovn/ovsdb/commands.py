@@ -178,7 +178,7 @@ class AddLogicalPortPairGroupCommand(BaseCommand):
             lport_chain = idlutils.row_by_value(self.api.idl,
                                                 'Logical_Port_Chain',
                                                 'name', self.lport_chain)
-            port_pair_groups = getattr(self.lport_chain,
+            port_pair_groups = getattr(lport_chain,
                                        'port_pair_groups', [])
         except idlutils.RowNotFound:
             msg = _("Logical Port Chain %s does not exist") % self.lport_chain
