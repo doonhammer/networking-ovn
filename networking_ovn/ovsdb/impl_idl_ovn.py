@@ -102,11 +102,11 @@ class OvsdbOvnIdl(ovn_api.API):
                                                   lport_chain_name, may_exist,
                                                   **columns)
 
-    def set_lport_pair_group(self, lport_pair_group_name, lport_pair_name,
-                             if_exists=True):
+    def set_lport_pair_group(self, lport_pair_group_name, if_exists=True,
+                             **columns):
         return cmd.SetLogicalPortPairGroupCommand(self, lport_pair_group_name,
-                                                  lport_pair_name,
-                                                  if_exists)
+                                                  if_exists,
+                                                  **columns)
 
     def delete_lport_pair_group(self, lport_pair_group_name=None,
                                 lport_chain=None, ext_id=None,
@@ -129,10 +129,12 @@ class OvsdbOvnIdl(ovn_api.API):
                                              if_exists, **columns)
 
     def delete_lport_pair(self, lport_pair_name=None, lswitch=None,
-                          ext_id=None, if_exists=True):
+                          lport_pair_group_name=None, if_exists=True):
         if lport_pair_name is not None:
             return cmd.DelLogicalPortPairCommand(self, lport_pair_name,
-                                                 lswitch, if_exists)
+                                                 lswitch,
+                                                 lport_pair_group_name,
+                                                 if_exists)
         else:
             raise RuntimeError(_("Currently only supports "
                                  "delete by lport-pair-name"))

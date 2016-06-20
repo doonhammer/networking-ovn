@@ -195,16 +195,16 @@ class API(object):
         """
 
     @abc.abstractmethod
-    def delete_lport_pair(self, name=None, lswitch_name=None, ext_id=None,
-                          if_exists=True):
+    def delete_lport_pair(self, name=None, lswitch_name=None,
+                          lport_pair_group_name=None, if_exists=True):
         """Create a command to delete a lport_pair
 
         :param name:      The name of the lport_pair
         :type name:       string
         :param lswitch:   The name of the lswitch
         :type lswitch:    string
-        :param ext_id:    The external id of the lport
-        :type ext_id:     pair of <ext_id_key ,ext_id_value>
+        :param port_pair_group_name: The name of the port pair group
+        :type port_pair_group_name:  string
         :param if_exists: Do not fail if the lport_pair does not exists
         :type if_exists:  bool
         :returns:         :class:`Command` with no result
