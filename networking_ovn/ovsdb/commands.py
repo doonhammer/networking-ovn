@@ -515,7 +515,7 @@ class DelLogicalFlowClassifierCommand(BaseCommand):
 
         port_chain.verify('flow_classifier')
 
-        port_chain.remove(lflow_classifier)
+        flow_classifier.remove(lflow_classifier)
         setattr(port_chain, 'flow_classifier', flow_classifier)
         self.api._tables['Logical_Flow_Classifier'].\
             rows[lflow_classifier.uuid].delete()
