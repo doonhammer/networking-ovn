@@ -14,12 +14,12 @@
 
 import copy
 import mock
-import six
 
 from neutron_lib import constants as const
 
 from networking_ovn.common import acl as ovn_acl
 from networking_ovn.common import constants as ovn_const
+from networking_ovn.common import utils as ovn_utils
 from networking_ovn.ovsdb import commands as cmd
 from networking_ovn.tests import base
 from networking_ovn.tests.unit import fakes
@@ -30,7 +30,7 @@ class TestACLs(base.TestCase):
     def setUp(self):
         super(TestACLs, self).setUp()
         self.driver = mock.Mock()
-        self.driver._ovn = fakes.FakeOvsdbOvnIdl()
+        self.driver._nb_ovn = fakes.FakeOvsdbNbOvnIdl()
         self.plugin = fakes.FakePlugin()
         self.admin_context = mock.Mock()
         self.fake_port = fakes.FakePort.create_one_port({
@@ -232,7 +232,7 @@ class TestACLs(base.TestCase):
         acls_new_dict_copy = copy.deepcopy(acls_new_dict)
 
         # Invoke _compute_acl_differences
-        update_cmd = cmd.UpdateACLsCommand(self.driver._ovn,
+        update_cmd = cmd.UpdateACLsCommand(self.driver._nb_ovn,
                                            [lswitch_name],
                                            iter(ports),
                                            acls_new_dict
@@ -242,26 +242,21 @@ class TestACLs(base.TestCase):
                                                 acls_old_dict,
                                                 acls_new_dict,
                                                 acl_obj_dict)
-        # Sort the results for comparison
-        for row in six.itervalues(acl_dels):
-            row.sort()
-        for row in six.itervalues(acl_adds):
-            row.sort()
         # Expected Difference (Sorted)
         acl_del_exp = {lswitch_name: ['row3', 'row6']}
         acl_adds_exp = {lswitch_name:
                         [{'priority': 1002, 'direction': 'to-lport',
                           'match': 'ip6 && (ip.src == %s)' %
-                          (port1['fixed_ips'][1]['ip_address'])},
+                          (port2['fixed_ips'][1]['ip_address'])},
                          {'priority': 1002, 'direction': 'to-lport',
                           'match': 'ip6 && (ip.src == %s)' %
-                          (port2['fixed_ips'][1]['ip_address'])}]}
+                          (port1['fixed_ips'][1]['ip_address'])}]}
         self.assertEqual(acl_dels, acl_del_exp)
         self.assertEqual(acl_adds, acl_adds_exp)
 
         # make sure argument add_acl=False will take no affect in
         # need_compare=True scenario
-        update_cmd_with_acl = cmd.UpdateACLsCommand(self.driver._ovn,
+        update_cmd_with_acl = cmd.UpdateACLsCommand(self.driver._nb_ovn,
                                                     [lswitch_name],
                                                     iter(ports),
                                                     acls_new_dict_copy,
@@ -272,10 +267,6 @@ class TestACLs(base.TestCase):
                                                          acls_old_dict,
                                                          acls_new_dict_copy,
                                                          acl_obj_dict)
-        for row in six.itervalues(new_acl_dels):
-            row.sort()
-        for row in six.itervalues(new_acl_adds):
-            row.sort()
         self.assertEqual(acl_dels, new_acl_dels)
         self.assertEqual(acl_adds, new_acl_adds)
 
@@ -298,7 +289,7 @@ class TestACLs(base.TestCase):
                          '%s' % (port2['id']): aclport2_new}
 
         # test for creating new acls
-        update_cmd_add_acl = cmd.UpdateACLsCommand(self.driver._ovn,
+        update_cmd_add_acl = cmd.UpdateACLsCommand(self.driver._nb_ovn,
                                                    [lswitch_name],
                                                    iter(ports),
                                                    acls_new_dict,
@@ -322,7 +313,7 @@ class TestACLs(base.TestCase):
             name='neutron-lswitch-1', acls=[acl1, acl2, acl3])
         with mock.patch('neutron.agent.ovsdb.native.idlutils.row_by_value',
                         return_value=lswitch_obj):
-            update_cmd_del_acl = cmd.UpdateACLsCommand(self.driver._ovn,
+            update_cmd_del_acl = cmd.UpdateACLsCommand(self.driver._nb_ovn,
                                                        [lswitch_name],
                                                        iter(ports),
                                                        acls_new_dict,
@@ -373,19 +364,45 @@ class TestACLs(base.TestCase):
         match = ovn_acl.acl_protocol_and_ports(sg_rule, icmp)
         self.assertEqual(expected_match, match)
 
+    def test_acl_protocol_and_ports_for_icmp4_and_icmp6_port_range(self):
+        match_list = [
+            (None, None, ' && icmp4'),
+            (0, None, ' && icmp4 && icmp4.type == 0'),
+            (0, 0, ' && icmp4 && icmp4.type == 0 && icmp4.code == 0'),
+            (0, 5, ' && icmp4 && icmp4.type == 0 && icmp4.code == 5')]
+        v6_match_list = [
+            (None, None, ' && icmp6'),
+            (133, None, ' && icmp6 && icmp6.type == 133'),
+            (1, 1, ' && icmp6 && icmp6.type == 1 && icmp6.code == 1'),
+            (138, 1, ' && icmp6 && icmp6.type == 138 && icmp6.code == 1')]
+
+        sg_rule = {'protocol': const.PROTO_NAME_ICMP}
+        icmp = 'icmp4'
+        for pmin, pmax, expected_match in match_list:
+            sg_rule['port_range_min'] = pmin
+            sg_rule['port_range_max'] = pmax
+            match = ovn_acl.acl_protocol_and_ports(sg_rule, icmp)
+            self.assertEqual(expected_match, match)
+
+        sg_rule = {'protocol': const.PROTO_NAME_IPV6_ICMP}
+        icmp = 'icmp6'
+        for pmin, pmax, expected_match in v6_match_list:
+            sg_rule['port_range_min'] = pmin
+            sg_rule['port_range_max'] = pmax
+            match = ovn_acl.acl_protocol_and_ports(sg_rule, icmp)
+            self.assertEqual(expected_match, match)
+
     def test_acl_direction(self):
         sg_rule = fakes.FakeSecurityGroupRule.create_one_security_group_rule({
             'direction': 'ingress'
         }).info()
 
-        match, remote_portdir = ovn_acl.acl_direction(sg_rule, self.fake_port)
+        match = ovn_acl.acl_direction(sg_rule, self.fake_port)
         self.assertEqual('outport == "' + self.fake_port['id'] + '"', match)
-        self.assertEqual('inport', remote_portdir)
 
         sg_rule['direction'] = 'egress'
-        match, remote_portdir = ovn_acl.acl_direction(sg_rule, self.fake_port)
+        match = ovn_acl.acl_direction(sg_rule, self.fake_port)
         self.assertEqual('inport == "' + self.fake_port['id'] + '"', match)
-        self.assertEqual('outport', remote_portdir)
 
     def test_acl_ethertype(self):
         sg_rule = fakes.FakeSecurityGroupRule.create_one_security_group_rule({
@@ -424,6 +441,27 @@ class TestACLs(base.TestCase):
         expected_match = ' && %s.dst == %s' % (ip_version, remote_ip_prefix)
         self.assertEqual(expected_match, match)
 
+    def test_acl_remote_group_id(self):
+        sg_rule = fakes.FakeSecurityGroupRule.create_one_security_group_rule({
+            'direction': 'ingress',
+            'remote_group_id': None
+        }).info()
+        ip_version = 'ip4'
+        sg_id = sg_rule['security_group_id']
+
+        addrset_name = ovn_utils.ovn_addrset_name(sg_id, ip_version)
+
+        match = ovn_acl.acl_remote_group_id(sg_rule, ip_version)
+        self.assertEqual('', match)
+
+        sg_rule['remote_group_id'] = sg_id
+        match = ovn_acl.acl_remote_group_id(sg_rule, ip_version)
+        self.assertEqual(' && ip4.src == $' + addrset_name, match)
+
+        sg_rule['direction'] = 'egress'
+        match = ovn_acl.acl_remote_group_id(sg_rule, ip_version)
+        self.assertEqual(' && ip4.dst == $' + addrset_name, match)
+
     def test_update_acls_for_security_group(self):
         sg = fakes.FakeSecurityGroup.create_one_security_group().info()
         remote_sg = fakes.FakeSecurityGroup.create_one_security_group().info()
@@ -438,18 +476,75 @@ class TestACLs(base.TestCase):
         sg_ports_cache = {sg['id']: [{'port_id': port['id']}],
                           remote_sg['id']: []}
 
-        # Validate no ACLs to update when remote security group
-        # doesn't have any ports.
+        # Build ACL for validation.
+        expected_acl = ovn_acl._add_sg_rule_acl_for_port(port, sg_rule)
+        expected_acl.pop('lport')
+        expected_acl.pop('lswitch')
+
+        # Validate ACLs when port has security groups.
         ovn_acl.update_acls_for_security_group(self.plugin,
                                                self.admin_context,
-                                               self.driver._ovn,
+                                               self.driver._nb_ovn,
                                                sg['id'],
                                                sg_ports_cache=sg_ports_cache,
                                                rule=sg_rule)
-        self.driver._ovn.update_acls.assert_called_once_with(
+        self.driver._nb_ovn.update_acls.assert_called_once_with(
             [port['network_id']],
             mock.ANY,
-            {},
+            {port['id']: expected_acl},
             need_compare=False,
             is_add_acl=True
         )
+
+    def test_acl_port_ips(self):
+        port4 = fakes.FakePort.create_one_port({
+            'fixed_ips': [{'subnet_id': 'subnet-ipv4',
+                           'ip_address': '10.0.0.1'}],
+        }).info()
+        port46 = fakes.FakePort.create_one_port({
+            'fixed_ips': [{'subnet_id': 'subnet-ipv4',
+                           'ip_address': '10.0.0.2'},
+                          {'subnet_id': 'subnet-ipv6',
+                           'ip_address': 'fde3:d45:df72::1'}],
+        }).info()
+        port6 = fakes.FakePort.create_one_port({
+            'fixed_ips': [{'subnet_id': 'subnet-ipv6',
+                           'ip_address': '2001:db8::8'}],
+        }).info()
+
+        addresses = ovn_acl.acl_port_ips(port4)
+        self.assertEqual({'ip4': [port4['fixed_ips'][0]['ip_address']],
+                          'ip6': []},
+                         addresses)
+
+        addresses = ovn_acl.acl_port_ips(port46)
+        self.assertEqual({'ip4': [port46['fixed_ips'][0]['ip_address']],
+                          'ip6': [port46['fixed_ips'][1]['ip_address']]},
+                         addresses)
+
+        addresses = ovn_acl.acl_port_ips(port6)
+        self.assertEqual({'ip4': [],
+                          'ip6': [port6['fixed_ips'][0]['ip_address']]},
+                         addresses)
+
+    def test_sg_disabled(self):
+        sg = fakes.FakeSecurityGroup.create_one_security_group().info()
+        port = fakes.FakePort.create_one_port({
+            'security_groups': [sg['id']]
+        }).info()
+
+        with mock.patch('networking_ovn.common.acl.is_sg_enabled',
+                        return_value=False):
+            acl_list = ovn_acl.add_acls(self.plugin,
+                                        self.admin_context,
+                                        port, {}, {})
+            self.assertEqual([], acl_list)
+
+            ovn_acl.update_acls_for_security_group(self.plugin,
+                                                   self.admin_context,
+                                                   self.driver._ovn,
+                                                   sg['id'])
+            self.driver._ovn.update_acls.assert_not_called()
+
+            addresses = ovn_acl.acl_port_ips(port)
+            self.assertEqual({'ip4': [], 'ip6': []}, addresses)

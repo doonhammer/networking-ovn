@@ -14,8 +14,8 @@
 
 import atexit
 from eventlet import greenthread
-import Queue
 import retrying
+from six.moves.queue import Queue
 import threading
 
 from oslo_log import log
@@ -28,13 +28,35 @@ from neutron.agent.ovsdb.native import connection
 from neutron.agent.ovsdb.native import helpers
 from neutron.agent.ovsdb.native import idlutils
 from neutron.common import config
+from neutron.common import utils as n_utils
 from neutron import worker
 
 LOG = log.getLogger(__name__)
 
 
-class LogicalPortCreateUpEvent(row_event.RowEvent):
-    """Row create event - Logical_Port 'up' = True.
+class ChassisEvent(row_event.RowEvent):
+    """Chassis create update delete event."""
+
+    def __init__(self, driver):
+        self.driver = driver
+        table = 'Chassis'
+        events = (self.ROW_CREATE, self.ROW_UPDATE, self.ROW_DELETE)
+        super(ChassisEvent, self).__init__(events, table, None)
+        self.event_name = 'ChassisEvent'
+
+    def run(self, event, row, old):
+        host = row.hostname
+        phy_nets = []
+        if event != self.ROW_DELETE:
+            bridge_mappings = row.external_ids.get('ovn-bridge-mappings', '')
+            mapping_dict = n_utils.parse_mappings(bridge_mappings.split(','))
+            phy_nets = list(mapping_dict)
+
+        self.driver.update_segment_host_mapping(host, phy_nets)
+
+
+class LogicalSwitchPortCreateUpEvent(row_event.RowEvent):
+    """Row create event - Logical_Switch_Port 'up' = True.
 
     On connection, we get a dump of all ports, so if there is a neutron
     port that is down that has since been activated, we'll catch it here.
@@ -43,18 +65,18 @@ class LogicalPortCreateUpEvent(row_event.RowEvent):
 
     def __init__(self, driver):
         self.driver = driver
-        table = 'Logical_Port'
+        table = 'Logical_Switch_Port'
         events = (self.ROW_CREATE)
-        super(LogicalPortCreateUpEvent, self).__init__(
+        super(LogicalSwitchPortCreateUpEvent, self).__init__(
             events, table, (('up', '=', True),))
-        self.event_name = 'LogicalPortCreateUpEvent'
+        self.event_name = 'LogicalSwitchPortCreateUpEvent'
 
     def run(self, event, row, old):
         self.driver.set_port_status_up(row.name)
 
 
-class LogicalPortCreateDownEvent(row_event.RowEvent):
-    """Row create event - Logical_Port 'up' = False
+class LogicalSwitchPortCreateDownEvent(row_event.RowEvent):
+    """Row create event - Logical_Switch_Port 'up' = False
 
     On connection, we get a dump of all ports, so if there is a neutron
     port that is up that has since been deactivated, we'll catch it here.
@@ -62,57 +84,57 @@ class LogicalPortCreateDownEvent(row_event.RowEvent):
     """
     def __init__(self, driver):
         self.driver = driver
-        table = 'Logical_Port'
+        table = 'Logical_Switch_Port'
         events = (self.ROW_CREATE)
-        super(LogicalPortCreateDownEvent, self).__init__(
+        super(LogicalSwitchPortCreateDownEvent, self).__init__(
             events, table, (('up', '=', False),))
-        self.event_name = 'LogicalPortCreateDownEvent'
+        self.event_name = 'LogicalSwitchPortCreateDownEvent'
 
     def run(self, event, row, old):
         self.driver.set_port_status_down(row.name)
 
 
-class LogicalPortUpdateUpEvent(row_event.RowEvent):
-    """Row update event - Logical_Port 'up' going from False to True
+class LogicalSwitchPortUpdateUpEvent(row_event.RowEvent):
+    """Row update event - Logical_Switch_Port 'up' going from False to True
 
     This happens when the VM goes up.
-    New value of Logical_Port 'up' will be True and the old value will be
-    False.
+    New value of Logical_Switch_Port 'up' will be True and the old value will
+    be False.
     """
     def __init__(self, driver):
         self.driver = driver
-        table = 'Logical_Port'
+        table = 'Logical_Switch_Port'
         events = (self.ROW_UPDATE)
-        super(LogicalPortUpdateUpEvent, self).__init__(
+        super(LogicalSwitchPortUpdateUpEvent, self).__init__(
             events, table, (('up', '=', True),),
             old_conditions=(('up', '=', False),))
-        self.event_name = 'LogicalPortUpdateUpEvent'
+        self.event_name = 'LogicalSwitchPortUpdateUpEvent'
 
     def run(self, event, row, old):
         self.driver.set_port_status_up(row.name)
 
 
-class LogicalPortUpdateDownEvent(row_event.RowEvent):
-    """Row update event - Logical_Port 'up' going from True to False
+class LogicalSwitchPortUpdateDownEvent(row_event.RowEvent):
+    """Row update event - Logical_Switch_Port 'up' going from True to False
 
     This happens when the VM goes down.
-    New value of Logical_Port 'up' will be False and the old value will be
-    True.
+    New value of Logical_Switch_Port 'up' will be False and the old value will
+    be True.
     """
     def __init__(self, driver):
         self.driver = driver
-        table = 'Logical_Port'
+        table = 'Logical_Switch_Port'
         events = (self.ROW_UPDATE)
-        super(LogicalPortUpdateDownEvent, self).__init__(
+        super(LogicalSwitchPortUpdateDownEvent, self).__init__(
             events, table, (('up', '=', False),),
             old_conditions=(('up', '=', True),))
-        self.event_name = 'LogicalPortUpdateDownEvent'
+        self.event_name = 'LogicalSwitchPortUpdateDownEvent'
 
     def run(self, event, row, old):
         self.driver.set_port_status_down(row.name)
 
 
-class OvnNbNotifyHandler(object):
+class OvnDbNotifyHandler(object):
 
     STOP_EVENT = ("STOP", None, None, None)
 
@@ -120,7 +142,7 @@ class OvnNbNotifyHandler(object):
         self.driver = driver
         self.__watched_events = set()
         self.__lock = threading.Lock()
-        self.notifications = Queue.Queue()
+        self.notifications = Queue()
         self.notify_thread = greenthread.spawn_n(self.notify_loop)
         atexit.register(self.shutdown)
 
@@ -157,7 +179,7 @@ class OvnNbNotifyHandler(object):
                     pass
 
     def shutdown(self):
-        self.notifications.put(OvnNbNotifyHandler.STOP_EVENT)
+        self.notifications.put(OvnDbNotifyHandler.STOP_EVENT)
 
     def notify_loop(self):
         while True:
@@ -165,7 +187,7 @@ class OvnNbNotifyHandler(object):
                 match, event, row, updates = self.notifications.get()
                 if (not isinstance(match, row_event.RowEvent) and
                         (match, event, row, updates) == (
-                            OvnNbNotifyHandler.STOP_EVENT)):
+                            OvnDbNotifyHandler.STOP_EVENT)):
                     self.notifications.task_done()
                     break
                 match.run(event, row, updates)
@@ -188,23 +210,15 @@ class OvnIdl(idl.Idl):
 
     def __init__(self, driver, remote, schema):
         super(OvnIdl, self).__init__(remote, schema)
-        self._lp_update_up_event = LogicalPortUpdateUpEvent(driver)
-        self._lp_update_down_event = LogicalPortUpdateDownEvent(driver)
-        self._lp_create_up_event = LogicalPortCreateUpEvent(driver)
-        self._lp_create_down_event = LogicalPortCreateDownEvent(driver)
 
-        self.notify_handler = OvnNbNotifyHandler(driver)
-        self.notify_handler.watch_events([self._lp_create_up_event,
-                                          self._lp_create_down_event,
-                                          self._lp_update_up_event,
-                                          self._lp_update_down_event])
+        self.notify_handler = OvnDbNotifyHandler(driver)
         # ovsdb lock name to acquire.
         # This event lock is used to handle the notify events sent by idl.Idl
         # idl.Idl will call notify function for the "update" rpc method it
         # receives from the ovsdb-server.
         # This event lock is required for the following reasons
         #  - If there are multiple neutron servers running, OvnWorkers of
-        #    these neutron servers would recieve the notify events from
+        #    these neutron servers would receive the notify events from
         #    idl.Idl
         #
         #  - we do not want all the neutron servers to handle these events
@@ -227,24 +241,72 @@ class OvnIdl(idl.Idl):
         LOG.debug("Have the event lock to handle the notify events")
         self.notify_handler.notify(event, row, updates)
 
-    def unwatch_logical_port_create_events(self):
-        """Unwatch the logical port create events.
+    def post_initialize(self, driver):
+        """Should be called after the idl has been initialized"""
+        pass
+
+
+class OvnNbIdl(OvnIdl):
+
+    def __init__(self, driver, remote, schema):
+        super(OvnNbIdl, self).__init__(driver, remote, schema)
+        self._lsp_update_up_event = LogicalSwitchPortUpdateUpEvent(driver)
+        self._lsp_update_down_event = LogicalSwitchPortUpdateDownEvent(driver)
+        self._lsp_create_up_event = LogicalSwitchPortCreateUpEvent(driver)
+        self._lsp_create_down_event = LogicalSwitchPortCreateDownEvent(driver)
+
+        self.notify_handler.watch_events([self._lsp_create_up_event,
+                                          self._lsp_create_down_event,
+                                          self._lsp_update_up_event,
+                                          self._lsp_update_down_event])
+
+    def unwatch_logical_switch_port_create_events(self):
+        """Unwatch the logical switch port create events.
 
         When the ovs idl client connects to the ovsdb-server, it gets
-        a dump of all logical ports as events and we need to process them
-        at start up.
+        a dump of all logical switch ports as events and we need to process
+        them at start up.
         After the startup, there is no need to watch these events.
         So unwatch these events.
         """
-        self.notify_handler.unwatch_events([self._lp_create_up_event,
-                                            self._lp_create_down_event])
-        self._lp_create_up_event = None
-        self._lp_create_down_event = None
+        self.notify_handler.unwatch_events([self._lsp_create_up_event,
+                                            self._lsp_create_down_event])
+        self._lsp_create_up_event = None
+        self._lsp_create_down_event = None
+
+    def post_initialize(self, driver):
+        self.unwatch_logical_switch_port_create_events()
+
+
+class OvnSbIdl(OvnIdl):
+
+    def post_initialize(self, driver):
+        """Watch Chassis events.
+
+        When the ovs idl client connects to the ovsdb-server, it gets
+        a dump of all Chassis create event. We don't need to process them
+        because there will be sync up at startup. After that, we will watch
+        the events to make notify work.
+        """
+        self._chassis_event = ChassisEvent(driver)
+        self.notify_handler.watch_events([self._chassis_event])
 
 
 class OvnConnection(connection.Connection):
 
-    def start(self, driver):
+    def get_ovn_idl_cls(self):
+        """Get the ovn idl class
+
+        The connection might be for OVN_Southbound or OVN_Northbound. Return
+        different idl class according to the schema_name of connection.
+        """
+        if self.schema_name == 'OVN_Southbound':
+            return OvnSbIdl
+
+        # Return the ovn nb idl for the backward compatibility
+        return OvnNbIdl
+
+    def start(self, driver, table_name_list=None):
         # The implementation of this function is same as the base class start()
         # except that OvnIdl object is created instead of idl.Idl
         with self.lock:
@@ -266,14 +328,17 @@ class OvnConnection(connection.Connection):
                                                       self.schema_name)
                 helper = do_get_schema_helper()
 
-            helper.register_all()
-            self.idl = OvnIdl(driver, self.connection, helper)
+            if table_name_list is None:
+                helper.register_all()
+            else:
+                for table_name in table_name_list:
+                    helper.register_table(table_name)
+
+            idl_cls = self.get_ovn_idl_cls()
+            self.idl = idl_cls(driver, self.connection, helper)
             self.idl.set_lock(self.idl.event_lock_name)
             idlutils.wait_for_change(self.idl, self.timeout)
-            # We would have received the initial dump of all the logical
-            # ports as events by now. Unwatch the create events for
-            # logical ports as it is no longer necessary.
-            self.idl.unwatch_logical_port_create_events()
+            self.idl.post_initialize(driver)
             self.poller = poller.Poller()
             self.thread = threading.Thread(target=self.run)
             self.thread.setDaemon(True)

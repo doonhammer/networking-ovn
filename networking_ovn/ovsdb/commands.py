@@ -228,9 +228,9 @@ class DelLogicalPortPairGroupCommand(BaseCommand):
         setattr(lport_chain, 'port_pair_groups', port_pair_groups)
         self.api._tables['Logical_Port_Pair_Group'].rows[lport_pair_group.uuid].delete()
 
-class AddLogicalPortCommand(BaseCommand):
+class AddLSwitchPortCommand(BaseCommand):
     def __init__(self, api, lport, lswitch, may_exist, **columns):
-        super(AddLogicalPortCommand, self).__init__(api)
+        super(AddLSwitchPortCommand, self).__init__(api)
         self.lport = lport
         self.lswitch = lswitch
         self.may_exist = may_exist
@@ -246,14 +246,14 @@ class AddLogicalPortCommand(BaseCommand):
             raise RuntimeError(msg)
         if self.may_exist:
             port = idlutils.row_by_value(self.api.idl,
-                                         'Logical_Port', 'name',
+                                         'Logical_Switch_Port', 'name',
                                          self.lport, None)
             if port:
                 return
 
         lswitch.verify('ports')
 
-        port = txn.insert(self.api._tables['Logical_Port'])
+        port = txn.insert(self.api._tables['Logical_Switch_Port'])
         port.name = self.lport
         for col, val in self.columns.items():
             setattr(port, col, val)
@@ -262,37 +262,37 @@ class AddLogicalPortCommand(BaseCommand):
         setattr(lswitch, 'ports', ports)
 
 
-class SetLogicalPortCommand(BaseCommand):
+class SetLSwitchPortCommand(BaseCommand):
     def __init__(self, api, lport, if_exists, **columns):
-        super(SetLogicalPortCommand, self).__init__(api)
+        super(SetLSwitchPortCommand, self).__init__(api)
         self.lport = lport
         self.columns = columns
         self.if_exists = if_exists
 
     def run_idl(self, txn):
         try:
-            port = idlutils.row_by_value(self.api.idl, 'Logical_Port',
+            port = idlutils.row_by_value(self.api.idl, 'Logical_Switch_Port',
                                          'name', self.lport)
         except idlutils.RowNotFound:
             if self.if_exists:
                 return
-            msg = _("Logical Port %s does not exist") % self.lport
+            msg = _("Logical Switch Port %s does not exist") % self.lport
             raise RuntimeError(msg)
 
         for col, val in self.columns.items():
             setattr(port, col, val)
 
 
-class DelLogicalPortCommand(BaseCommand):
+class DelLSwitchPortCommand(BaseCommand):
     def __init__(self, api, lport, lswitch, if_exists):
-        super(DelLogicalPortCommand, self).__init__(api)
+        super(DelLSwitchPortCommand, self).__init__(api)
         self.lport = lport
         self.lswitch = lswitch
         self.if_exists = if_exists
 
     def run_idl(self, txn):
         try:
-            lport = idlutils.row_by_value(self.api.idl, 'Logical_Port',
+            lport = idlutils.row_by_value(self.api.idl, 'Logical_Switch_Port',
                                           'name', self.lport)
             lswitch = idlutils.row_by_value(self.api.idl, 'Logical_Switch',
                                             'name', self.lswitch)
@@ -307,7 +307,7 @@ class DelLogicalPortCommand(BaseCommand):
 
         ports.remove(lport)
         setattr(lswitch, 'ports', ports)
-        self.api._tables['Logical_Port'].rows[lport.uuid].delete()
+        self.api._tables['Logical_Switch_Port'].rows[lport.uuid].delete()
 
 class AddLogicalPortPairCommand(BaseCommand):
     def __init__(self, api, lport_pair, lswitch, may_exist, **columns):
@@ -546,9 +546,13 @@ class AddLRouterPortCommand(BaseCommand):
         try:
             idlutils.row_by_value(self.api.idl, 'Logical_Router_Port',
                                   'name', self.name)
-            # TODO(chandrav) This might be a case of multiple prefixes
-            # on the same port. yet to figure out if and how OVN needs
-            # to cater to this case
+            # The LRP entry with certain name has already exist, raise an
+            # exception to notice caller. It's caller's responsibility to
+            # call UpdateLRouterPortCommand to get LRP entry processed
+            # correctly.
+            msg = _("Logical Router Port with name \"%s\" "
+                    "already exists.") % self.name
+            raise RuntimeError(msg)
         except idlutils.RowNotFound:
             lrouter_port = txn.insert(self.api._tables['Logical_Router_Port'])
             lrouter_port.name = self.name
@@ -559,6 +563,30 @@ class AddLRouterPortCommand(BaseCommand):
             if lrouter_port not in lrouter_ports:
                 lrouter_ports.append(lrouter_port)
                 setattr(lrouter, 'ports', lrouter_ports)
+
+
+class UpdateLRouterPortCommand(BaseCommand):
+    def __init__(self, api, name, lrouter, if_exists, **columns):
+        super(UpdateLRouterPortCommand, self).__init__(api)
+        self.name = name
+        self.columns = columns
+        self.if_exists = if_exists
+
+    def run_idl(self, txn):
+        try:
+            lrouter_port = idlutils.row_by_value(self.api.idl,
+                                                 'Logical_Router_Port',
+                                                 'name', self.name)
+        except idlutils.RowNotFound:
+            if self.if_exists:
+                return
+            msg = _("Logical Router Port %s does not exist") % self.name
+            raise RuntimeError(msg)
+
+        if lrouter_port:
+            for col, val in self.columns.items():
+                setattr(lrouter_port, col, val)
+            return
 
 
 class DelLRouterPortCommand(BaseCommand):
@@ -592,18 +620,19 @@ class DelLRouterPortCommand(BaseCommand):
             setattr(lrouter, 'ports', lrouter_ports)
 
 
-class SetLRouterPortInLPortCommand(BaseCommand):
-    def __init__(self, api, lport, lrouter_port):
-        super(SetLRouterPortInLPortCommand, self).__init__(api)
-        self.lport = lport
+class SetLRouterPortInLSwitchPortCommand(BaseCommand):
+    def __init__(self, api, lswitch_port, lrouter_port):
+        super(SetLRouterPortInLSwitchPortCommand, self).__init__(api)
+        self.lswitch_port = lswitch_port
         self.lrouter_port = lrouter_port
 
     def run_idl(self, txn):
         try:
-            port = idlutils.row_by_value(self.api.idl, 'Logical_Port',
-                                         'name', self.lport)
+            port = idlutils.row_by_value(self.api.idl, 'Logical_Switch_Port',
+                                         'name', self.lswitch_port)
         except idlutils.RowNotFound:
-            msg = _("Logical Port %s does not exist") % self.lport
+            msg = _("Logical Switch Port %s does not "
+                    "exist") % self.lswitch_port
             raise RuntimeError(msg)
 
         options = {'router-port': self.lrouter_port}
@@ -814,16 +843,21 @@ class UpdateACLsCommand(BaseCommand):
                 self._get_update_data_without_compare()
 
         for lswitch_name, lswitch in six.iteritems(lswitch_ovsdb_dict):
+            acl_del_objs = acl_del_objs_dict.get(lswitch_name, [])
+            acl_add_values = acl_add_values_dict.get(lswitch_name, [])
+
+            # Continue if no ACLs to add or delete.
+            if not acl_del_objs and not acl_add_values:
+                continue
+
             lswitch.verify('acls')
             acls = getattr(lswitch, 'acls', [])
 
             # Delete ACLs
-            acl_del_objs = acl_del_objs_dict.get(lswitch_name, [])
             if acl_del_objs:
                 self._delete_acls(lswitch_name, acls, acl_del_objs)
 
             # Add new ACLs
-            acl_add_values = acl_add_values_dict.get(lswitch_name, [])
             if acl_add_values:
                 self._add_acls(txn, acls, acl_add_values)
 
@@ -882,3 +916,72 @@ class DelStaticRouteCommand(BaseCommand):
                 route.delete()
                 break
         setattr(lrouter, 'static_routes', static_routes)
+
+
+class AddAddrSetCommand(BaseCommand):
+    def __init__(self, api, name, may_exist, **columns):
+        super(AddAddrSetCommand, self).__init__(api)
+        self.name = name
+        self.columns = columns
+        self.may_exist = may_exist
+
+    def run_idl(self, txn):
+        if self.may_exist:
+            addrset = idlutils.row_by_value(self.api.idl, 'Address_Set',
+                                            'name', self.name, None)
+            if addrset:
+                return
+        row = txn.insert(self.api._tables['Address_Set'])
+        row.name = self.name
+        for col, val in self.columns.items():
+            setattr(row, col, val)
+
+
+class DelAddrSetCommand(BaseCommand):
+    def __init__(self, api, name, if_exists):
+        super(DelAddrSetCommand, self).__init__(api)
+        self.name = name
+        self.if_exists = if_exists
+
+    def run_idl(self, txn):
+        try:
+            addrset = idlutils.row_by_value(self.api.idl, 'Address_Set',
+                                            'name', self.name)
+        except idlutils.RowNotFound:
+            if self.if_exists:
+                return
+            msg = _("Address set %s does not exist. "
+                    "Can't delete.") % self.name
+            raise RuntimeError(msg)
+
+        self.api._tables['Address_Set'].rows[addrset.uuid].delete()
+
+
+class UpdateAddrSetCommand(BaseCommand):
+    def __init__(self, api, name, addrs_add, addrs_remove, if_exists):
+        super(UpdateAddrSetCommand, self).__init__(api)
+        self.name = name
+        self.addrs_add = addrs_add
+        self.addrs_remove = addrs_remove
+        self.if_exists = if_exists
+
+    def run_idl(self, txn):
+        try:
+            addrset = idlutils.row_by_value(self.api.idl, 'Address_Set',
+                                            'name', self.name)
+        except idlutils.RowNotFound:
+            if self.if_exists:
+                return
+            msg = _("Address set %s does not exist. "
+                    "Can't update addresses") % self.name
+            raise RuntimeError(msg)
+
+        addrset.verify('addresses')
+        addresses_col = getattr(addrset, 'addresses', [])
+        if self.addrs_add:
+            for addr_add in self.addrs_add:
+                addresses_col.append(addr_add)
+        if self.addrs_remove:
+            for addr_remove in self.addrs_remove:
+                addresses_col.remove(addr_remove)
+        setattr(addrset, 'addresses', addresses_col)

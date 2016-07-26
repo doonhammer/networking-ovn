@@ -99,7 +99,7 @@ creates logical switches with a name in the format neutron-<network UUID>.  So,
 we can use ``ovn-nbctl`` to list the configured logical switches and see that
 their names correlate with the output from ``neutron net-list``::
 
-    $ ovn-nbctl lswitch-list
+    $ ovn-nbctl ls-list
     c628c46a-372f-412b-8edf-eb3408b021ca (neutron-266371ca-904e-4433-b653-866f9204d22e)
 
     $ ovn-nbctl get Logical_Switch neutron-266371ca-904e-4433-b653-866f9204d22e external_ids
@@ -315,14 +315,15 @@ with the::
     $ TEST1_PORT_ID=e3800c90-24d4-49ad-abb2-041a2e3dd259
     $ TEST2_PORT_ID=d660a917-5095-4bd0-92c5-d0abdffb600b
 
-Now we can look at OVN using ``ovn-nbctl`` to see the logical ports that were
-created for these two Neutron ports.  The first part of the output is the OVN
-logical port UUID.  The second part in parentheses is the logical port name.
-Neutron sets the logical port name equal to the Neutron port ID.
+Now we can look at OVN using ``ovn-nbctl`` to see the logical switch ports
+that were created for these two Neutron ports.  The first part of the output
+is the OVN logical switch port UUID.  The second part in parentheses is the
+logical switch port name. Neutron sets the logical switch port name equal to
+the Neutron port ID.
 
 ::
 
-    $ ovn-nbctl lport-list neutron-$PRIVATE_NET_ID
+    $ ovn-nbctl lsp-list neutron-$PRIVATE_NET_ID
     1117ac4e-1c83-4fd5-bb16-6c9c11150446 (e3800c90-24d4-49ad-abb2-041a2e3dd259)
     9be0ab27-1565-4b92-b2d2-c4578e90c46d (d660a917-5095-4bd0-92c5-d0abdffb600b)
     1e81abcf-574b-4533-8202-da182491724c (51f98e51-143b-4968-a7a9-e2d8d419b246)
@@ -543,22 +544,22 @@ Alternatively, you can define connectivity to a VLAN instead of a flat network:
     --provider:network_type vlan \
     --provider:segmentation_id 101
 
-Observe that the OVN ML2 driver created a special logical port of type localnet
-on the logical switch to model the connection to the physical network.
+Observe that the OVN ML2 driver created a special logical switch port of type
+localnet on the logical switch to model the connection to the physical network.
 
 ::
 
     $ ovn-nbctl show
     ...
-     lswitch 5bbccbbd-f5ca-411b-bad9-01095d6f1316 (neutron-729dbbee-db84-4a3d-afc3-82c0b3701074)
-         lport provnet-729dbbee-db84-4a3d-afc3-82c0b3701074
+     switch 5bbccbbd-f5ca-411b-bad9-01095d6f1316 (neutron-729dbbee-db84-4a3d-afc3-82c0b3701074)
+         port provnet-729dbbee-db84-4a3d-afc3-82c0b3701074
              addresses: ["unknown"]
     ...
 
-    $ ovn-nbctl lport-get-type provnet-729dbbee-db84-4a3d-afc3-82c0b3701074
+    $ ovn-nbctl lsp-get-type provnet-729dbbee-db84-4a3d-afc3-82c0b3701074
     localnet
 
-    $ ovn-nbctl lport-get-options provnet-729dbbee-db84-4a3d-afc3-82c0b3701074
+    $ ovn-nbctl lsp-get-options provnet-729dbbee-db84-4a3d-afc3-82c0b3701074
     network_name=providernet
 
 If VLAN is used, there will be a VLAN tag shown on the localnet port as well.

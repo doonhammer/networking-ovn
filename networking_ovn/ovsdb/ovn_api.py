@@ -252,11 +252,12 @@ class API(object):
         """
 
     @abc.abstractmethod
-    def create_lport(self, name, lswitch_name, may_exist=True, **columns):
-        """Create a command to add an OVN lport
+    def create_lswitch_port(self, lport_name, lswitch_name, may_exist=True,
+                            **columns):
+        """Create a command to add an OVN logical switch port
 
-        :param name:          The name of the lport
-        :type name:           string
+        :param lport_name:    The name of the lport
+        :type lport_name:     string
         :param lswitch_name:  The name of the lswitch the lport is created on
         :type lswitch_name:   string
         :param may_exist:     Do not fail if lport already exists
@@ -269,8 +270,8 @@ class API(object):
         """
 
     @abc.abstractmethod
-    def set_lport(self, lport_name, if_exists=True, **columns):
-        """Create a command to set OVN lport fields
+    def set_lswitch_port(self, lport_name, if_exists=True, **columns):
+        """Create a command to set OVN logical switch port fields
 
         :param lport_name:    The name of the lport
         :type lport_name:     string
@@ -284,19 +285,19 @@ class API(object):
         """
 
     @abc.abstractmethod
-    def delete_lport(self, name=None, lswitch=None, ext_id=None,
-                     if_exists=True):
-        """Create a command to delete an OVN lport
+    def delete_lswitch_port(self, lport_name=None, lswitch_name=None,
+                            ext_id=None, if_exists=True):
+        """Create a command to delete an OVN logical switch port
 
-        :param name:      The name of the lport
-        :type name:       string
-        :param lswitch:   The name of the lswitch
-        :type lswitch:    string
-        :param ext_id:    The external id of the lport
-        :type ext_id:     pair of <ext_id_key ,ext_id_value>
-        :param if_exists: Do not fail if the lport does not exists
-        :type if_exists:  bool
-        :returns:         :class:`Command` with no result
+        :param lport_name:    The name of the lport
+        :type lport_name:     string
+        :param lswitch_name:  The name of the lswitch
+        :type lswitch_name:   string
+        :param ext_id:        The external id of the lport
+        :type ext_id:         pair of <ext_id_key ,ext_id_value>
+        :param if_exists:     Do not fail if the lport does not exists
+        :type if_exists:      bool
+        :returns:             :class:`Command` with no result
         """
 
     @abc.abstractmethod
@@ -314,10 +315,10 @@ class API(object):
         """
 
     @abc.abstractmethod
-    def get_all_logical_ports_ids(self):
-        """Returns all logical ports names and external ids
+    def get_all_logical_switch_ports_ids(self):
+        """Returns all logical switch ports names and external ids
 
-        :returns: dictionary with lport name and ext ids
+        :returns: dictionary with lsp name and ext ids
         """
 
     @abc.abstractmethod
@@ -379,6 +380,22 @@ class API(object):
         """
 
     @abc.abstractmethod
+    def update_lrouter_port(self, name, lrouter, if_exists=True, **columns):
+        """Update a command to add an OVN lrouter port
+
+        :param name:         The unique name of the lrouter port
+        :type name:          string
+        :param lrouter:      The unique name of the lrouter
+        :type lrouter:       string
+        :param if_exists:    Do not fail if the lrouter port does not exists
+        :type if_exists:     bool
+        :param columns:      Dictionary of lrouter columns
+                             Supported columns: networks
+        :type columns:       dictionary
+        :returns:            :class:`Command` with no result
+        """
+
+    @abc.abstractmethod
     def delete_lrouter_port(self, name, lrouter, if_exists=True):
         """Create a command to delete an OVN lrouter port
 
@@ -392,11 +409,11 @@ class API(object):
         """
 
     @abc.abstractmethod
-    def set_lrouter_port_in_lport(self, lport, lrouter_port):
-        """Create a command to set lport as lrouter_port
+    def set_lrouter_port_in_lswitch_port(self, lswitch_port, lrouter_port):
+        """Create a command to set lswitch_port as lrouter_port
 
-        :param lport:        The name of logical port
-        :type lport:         string
+        :param lswitch_port: The name of logical switch port
+        :type lswitch_port:  string
         :param lrouter_port: The name of logical router port
         :type lrouter_port:  string
         :returns:            :class:`Command` with no result
@@ -471,4 +488,56 @@ class API(object):
         :param if_exists:    Do not fail if router does not exist
         :type if_exists:     bool
         :returns:            :class:`Command` with no result
+        """
+
+    @abc.abstractmethod
+    def create_address_set(self, name, may_exist=True, **columns):
+        """Create an address set
+
+        :param name:        The name of the address set
+        :type name:         string
+        :param may_exist:   Do not fail if address set already exists
+        :type may_exist:    bool
+        :param columns:     Dictionary of address set columns
+                            Supported columns: external_ids, addresses
+        :type columns:      dictionary
+        :returns:           :class:`Command` with no result
+        """
+
+    @abc.abstractmethod
+    def delete_address_set(self, name, if_exists=True):
+        """Delete an address set
+
+        :param name:        The name of the address set
+        :type name:         string
+        :param if_exists:   Do not fail if the address set does not exist
+        :type if_exists:    bool
+        :returns:           :class:`Command` with no result
+        """
+
+    @abc.abstractmethod
+    def update_address_set(self, name, addrs_add, addrs_remove,
+                           if_exists=True):
+        """Updates addresses in an address set
+
+        :param name:            The name of the address set
+        :type name:             string
+        :param addrs_add:       The addresses to be added
+        :type addrs_add:        []
+        :param addrs_remove:    The addresses to be removed
+        :type addrs_remove:     []
+        :param if_exists:       Do not fail if the address set does not exist
+        :type if_exists:        bool
+        :returns:               :class:`Command` with no result
+        """
+
+
+@six.add_metaclass(abc.ABCMeta)
+class SbAPI(object):
+    @abc.abstractmethod
+    def get_chassis_hostname_and_physnets(self):
+        """Return a dict contains hostname and physnets mapping.
+
+        Hostname will be dict key, and a list of physnets will be dict
+        value. And hostname and physnets are related to the same host.
         """

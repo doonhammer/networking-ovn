@@ -16,6 +16,7 @@ from oslo_config import cfg
 from oslo_db import options as db_options
 from oslo_log import log as logging
 
+from neutron.agent import securitygroups_rpc
 from neutron import context
 from neutron import manager
 from neutron import opts as neutron_options
@@ -24,7 +25,7 @@ from neutron.plugins.ml2 import plugin as ml2_plugin
 from networking_ovn._i18n import _LI, _LE
 from networking_ovn.common import config as ovn_config
 from networking_ovn.ml2 import mech_driver
-from networking_ovn import ovn_nb_sync
+from networking_ovn import ovn_db_sync
 from networking_ovn.ovsdb import impl_idl_ovn
 
 LOG = logging.getLogger(__name__)
@@ -52,6 +53,8 @@ def setup_conf():
     conf = cfg.CONF
     ml2_group, ml2_opts = neutron_options.list_ml2_conf_opts()[0]
     cfg.CONF.register_cli_opts(ml2_opts, ml2_group)
+    cfg.CONF.register_cli_opts(securitygroups_rpc.security_group_opts,
+                               'SECURITYGROUP')
     ovn_group, ovn_opts = ovn_config.list_opts()[0]
     cfg.CONF.register_cli_opts(ovn_opts, group=ovn_group)
     db_group, neutron_db_opts = db_options.list_opts()[0]
@@ -78,7 +81,7 @@ def main():
     logging.setup(conf, 'neutron_ovn_db_sync_util')
     LOG.info(_LI('Started Neutron OVN db sync'))
     mode = ovn_config.get_ovn_neutron_sync_mode()
-    if mode not in [ovn_nb_sync.SYNC_MODE_LOG, ovn_nb_sync.SYNC_MODE_REPAIR]:
+    if mode not in [ovn_db_sync.SYNC_MODE_LOG, ovn_db_sync.SYNC_MODE_REPAIR]:
         LOG.error(_LE('Invalid sync mode : ["%s"]. Should be "log" or '
                       '"repair"'), mode)
         return
@@ -98,16 +101,16 @@ def main():
         return
 
     try:
-        ovn_api = impl_idl_ovn.OvsdbOvnIdl(None)
+        ovn_api = impl_idl_ovn.OvsdbNbOvnIdl(None)
     except RuntimeError:
-        LOG.error(_LE('Invalid --ovn-ovsdb_connection parameter provided.'))
+        LOG.error(_LE('Invalid --ovn-ovn_nb_connection parameter provided.'))
         return
 
     core_plugin = manager.NeutronManager.get_plugin()
     ovn_driver = core_plugin.mechanism_manager.mech_drivers['ovn-sync'].obj
-    ovn_driver._ovn_property = ovn_api
+    ovn_driver._nb_ovn = ovn_api
 
-    synchronizer = ovn_nb_sync.OvnNbSynchronizer(
+    synchronizer = ovn_db_sync.OvnNbSynchronizer(
         core_plugin, ovn_api, mode, ovn_driver)
 
     ctx = context.get_admin_context()

@@ -15,6 +15,7 @@ import six
 from neutron.agent.ovsdb import impl_idl
 from neutron.agent.ovsdb.native import connection
 from neutron.agent.ovsdb.native import idlutils
+from neutron.common import utils as n_utils
 
 from networking_ovn._i18n import _
 from networking_ovn.common import config as cfg
@@ -25,30 +26,40 @@ from networking_ovn.ovsdb import ovn_api
 from networking_ovn.ovsdb import ovsdb_monitor
 
 
-def get_connection(trigger=None):
+def get_ovn_idls(driver, trigger):
+    return OvsdbNbOvnIdl(driver, trigger), OvsdbSbOvnIdl(driver, trigger)
+
+
+def get_connection(db_class, trigger=None):
     # The trigger is the start() method of the NeutronWorker class
     if trigger and trigger.im_class == ovsdb_monitor.OvnWorker:
         cls = ovsdb_monitor.OvnConnection
     else:
         cls = connection.Connection
-    return cls(cfg.get_ovn_ovsdb_connection(),
-               cfg.get_ovn_ovsdb_timeout(), 'OVN_Northbound')
+
+    if db_class == OvsdbNbOvnIdl:
+        return cls(cfg.get_ovn_nb_connection(),
+                   cfg.get_ovn_ovsdb_timeout(), 'OVN_Northbound')
+    elif db_class == OvsdbSbOvnIdl:
+        return cls(cfg.get_ovn_sb_connection(),
+                   cfg.get_ovn_ovsdb_timeout(), 'OVN_Southbound')
 
 
-class OvsdbOvnIdl(ovn_api.API):
+class OvsdbNbOvnIdl(ovn_api.API):
 
     ovsdb_connection = None
 
     def __init__(self, driver, trigger=None):
-        super(OvsdbOvnIdl, self).__init__()
-        if OvsdbOvnIdl.ovsdb_connection is None:
-            OvsdbOvnIdl.ovsdb_connection = get_connection(trigger)
-        if isinstance(OvsdbOvnIdl.ovsdb_connection,
+        super(OvsdbNbOvnIdl, self).__init__()
+        if OvsdbNbOvnIdl.ovsdb_connection is None:
+            OvsdbNbOvnIdl.ovsdb_connection = get_connection(OvsdbNbOvnIdl,
+                                                            trigger)
+        if isinstance(OvsdbNbOvnIdl.ovsdb_connection,
                       ovsdb_monitor.OvnConnection):
-            OvsdbOvnIdl.ovsdb_connection.start(driver)
+            OvsdbNbOvnIdl.ovsdb_connection.start(driver)
         else:
-            OvsdbOvnIdl.ovsdb_connection.start()
-        self.idl = OvsdbOvnIdl.ovsdb_connection.idl
+            OvsdbNbOvnIdl.ovsdb_connection.start()
+        self.idl = OvsdbNbOvnIdl.ovsdb_connection.idl
         self.ovsdb_timeout = cfg.get_ovn_ovsdb_timeout()
 
     @property
@@ -57,7 +68,7 @@ class OvsdbOvnIdl(ovn_api.API):
 
     def transaction(self, check_error=False, log_errors=True, **kwargs):
         return impl_idl.Transaction(self,
-                                    OvsdbOvnIdl.ovsdb_connection,
+                                    OvsdbNbOvnIdl.ovsdb_connection,
                                     self.ovsdb_timeout,
                                     check_error, log_errors)
 
@@ -76,7 +87,7 @@ class OvsdbOvnIdl(ovn_api.API):
         return cmd.LSwitchSetExternalIdCommand(self, lswitch_id,
                                                ext_id[0], ext_id[1],
                                                if_exists)
-
+#
 #    def create_lport_chain(self, lport_chain_name, may_exist=True, **columns):
 #        return cmd.AddLPortChainCommand(self, lport_chain_name,
 #                                     may_exist, **columns)
@@ -147,23 +158,23 @@ class OvsdbOvnIdl(ovn_api.API):
             return cmd.DelLogicalFlowClassifierCommand(self, lflow_classifier_name,
                                              lswitch, if_exists)
         else:
-            raise RuntimeError(_("Currently only supports "
-                                 "delete by lflow-classifier-name"))
+            raise RuntimeError(_("Currently only delete "
+                                 "supports by lflow-classifier-name"))
 
-    def create_lport(self, lport_name, lswitch_name, may_exist=True,
-                     **columns):
-        return cmd.AddLogicalPortCommand(self, lport_name, lswitch_name,
+    def create_lswitch_port(self, lport_name, lswitch_name, may_exist=True,
+                            **columns):
+        return cmd.AddLSwitchPortCommand(self, lport_name, lswitch_name,
                                          may_exist, **columns)
 
-    def set_lport(self, lport_name, if_exists=True, **columns):
-        return cmd.SetLogicalPortCommand(self, lport_name,
+    def set_lswitch_port(self, lport_name, if_exists=True, **columns):
+        return cmd.SetLSwitchPortCommand(self, lport_name,
                                          if_exists, **columns)
 
-    def delete_lport(self, lport_name=None, lswitch=None,
-                     ext_id=None, if_exists=True):
+    def delete_lswitch_port(self, lport_name=None, lswitch_name=None,
+                            ext_id=None, if_exists=True):
         if lport_name is not None:
-            return cmd.DelLogicalPortCommand(self, lport_name,
-                                             lswitch, if_exists)
+            return cmd.DelLSwitchPortCommand(self, lport_name,
+                                             lswitch_name, if_exists)
         else:
             raise RuntimeError(_("Currently only supports "
                                  "delete by lport-name"))
@@ -180,9 +191,9 @@ class OvsdbOvnIdl(ovn_api.API):
                 return row.external_ids
         return {}
 
-    def get_all_logical_ports_ids(self):
+    def get_all_logical_switch_ports_ids(self):
         result = {}
-        for row in self._tables['Logical_Port'].rows.values():
+        for row in self._tables['Logical_Switch_Port'].rows.values():
             result[row.name] = row.external_ids
         return result
 
@@ -283,12 +294,17 @@ class OvsdbOvnIdl(ovn_api.API):
     def add_lrouter_port(self, name, lrouter, **columns):
         return cmd.AddLRouterPortCommand(self, name, lrouter, **columns)
 
+    def update_lrouter_port(self, name, lrouter, if_exists=True, **columns):
+        return cmd.UpdateLRouterPortCommand(self, name, lrouter,
+                                            if_exists, **columns)
+
     def delete_lrouter_port(self, name, lrouter, if_exists=True):
         return cmd.DelLRouterPortCommand(self, name, lrouter,
                                          if_exists)
 
-    def set_lrouter_port_in_lport(self, lport, lrouter_port):
-        return cmd.SetLRouterPortInLPortCommand(self, lport, lrouter_port)
+    def set_lrouter_port_in_lswitch_port(self, lswitch_port, lrouter_port):
+        return cmd.SetLRouterPortInLSwitchPortCommand(self, lswitch_port,
+                                                      lrouter_port)
 
     def add_acl(self, lswitch, lport, **columns):
         return cmd.AddACLCommand(self, lswitch, lport, **columns)
@@ -309,3 +325,40 @@ class OvsdbOvnIdl(ovn_api.API):
     def delete_static_route(self, lrouter, ip_prefix, nexthop, if_exists=True):
         return cmd.DelStaticRouteCommand(self, lrouter, ip_prefix, nexthop,
                                          if_exists)
+
+    def create_address_set(self, name, may_exist=True, **columns):
+        return cmd.AddAddrSetCommand(self, name, may_exist, **columns)
+
+    def delete_address_set(self, name, if_exists=True, **columns):
+        return cmd.DelAddrSetCommand(self, name, if_exists)
+
+    def update_address_set(self, name, addrs_add, addrs_remove,
+                           if_exists=True):
+        return cmd.UpdateAddrSetCommand(self, name, addrs_add, addrs_remove,
+                                        if_exists)
+
+
+class OvsdbSbOvnIdl(ovn_api.SbAPI):
+
+    ovsdb_connection = None
+
+    def __init__(self, driver, trigger=None):
+        super(OvsdbSbOvnIdl, self).__init__()
+        if OvsdbSbOvnIdl.ovsdb_connection is None:
+            OvsdbSbOvnIdl.ovsdb_connection = get_connection(OvsdbSbOvnIdl,
+                                                            trigger)
+        if isinstance(OvsdbSbOvnIdl.ovsdb_connection,
+                      ovsdb_monitor.OvnConnection):
+            # We only need to know the content of Chassis in OVN_Southbound
+            OvsdbSbOvnIdl.ovsdb_connection.start(driver,
+                                                 table_name_list=['Chassis'])
+        self.idl = OvsdbSbOvnIdl.ovsdb_connection.idl
+        self.ovsdb_timeout = cfg.get_ovn_ovsdb_timeout()
+
+    def get_chassis_hostname_and_physnets(self):
+        chassis_info_dict = {}
+        for ch in self.idl.tables['Chassis'].rows.values():
+            bridge_mappings = ch.external_ids.get('ovn-bridge-mappings', '')
+            mapping_dict = n_utils.parse_mappings(bridge_mappings.split(','))
+            chassis_info_dict[ch.hostname] = mapping_dict.keys()
+        return chassis_info_dict
