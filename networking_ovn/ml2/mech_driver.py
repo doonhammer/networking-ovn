@@ -786,3 +786,4 @@ class OVNMechanismDriver(driver_api.MechanismDriver):
         segment_service_db.update_segment_host_mapping(
             ctx, host, available_seg_ids)
 
+
