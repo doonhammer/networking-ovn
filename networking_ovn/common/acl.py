@@ -17,6 +17,8 @@ import netaddr
 from neutron_lib import constants as const
 from oslo_config import cfg
 
+
+from networking_ovn.common import config
 from networking_ovn.common import constants as ovn_const
 from networking_ovn.common import utils
 
@@ -135,12 +137,9 @@ def add_sg_rule_acl_for_port(port, r, match):
 
 def add_acl_dhcp(port, subnet):
     # Allow DHCP responses through from source IPs on the local subnet.
-    # We do this even if DHCP isn't enabled.  It could be enabled later.
-    # We could hook into handling when it's enabled/disabled for a subnet,
-    # but this code is temporary anyway.  It's likely no longer needed
-    # once OVN native DHCP support merges, which is under development and
-    # review already.
-    # TODO(russellb) Remove this once OVN native DHCP support is merged.
+    # We do this even if DHCP isn't enabled for the subnet.  It could be
+    # enabled later. We could hook into handling when it's enabled/disabled
+    # for a subnet, but this only used when OVN native DHCP is disabled.
     acl_list = []
     acl = {"lswitch": utils.ovn_name(port['network_id']),
            "lport": port['id'],
@@ -238,22 +237,15 @@ def update_acls_for_security_group(plugin,
                                    admin_context,
                                    ovn,
                                    security_group_id,
-                                   sg_cache=None,
+                                   security_group_rule,
                                    sg_ports_cache=None,
-                                   subnet_cache=None,
-                                   exclude_ports=None,
-                                   rule=None,
                                    is_add_acl=True):
     # Skip ACLs if security groups aren't enabled
     if not is_sg_enabled():
         return
 
-    # Setup the caches or use cache provided.
-    sg_cache = sg_cache or {}
+    # Get the security group ports.
     sg_ports_cache = sg_ports_cache or {}
-    subnet_cache = subnet_cache or {}
-    exclude_ports = exclude_ports or []
-
     sg_ports = _get_sg_ports_from_cache(plugin,
                                         admin_context,
                                         sg_ports_cache,
@@ -261,41 +253,26 @@ def update_acls_for_security_group(plugin,
 
     # ACLs associated with a security group may span logical switches
     sg_port_ids = [binding['port_id'] for binding in sg_ports]
-    sg_port_ids = list(set(sg_port_ids) - set(exclude_ports))
+    sg_port_ids = list(set(sg_port_ids))
     port_list = plugin.get_ports(admin_context,
                                  filters={'id': sg_port_ids})
     lswitch_names = set([p['network_id'] for p in port_list])
     acl_new_values_dict = {}
 
-    # NOTE(lizk): When a certain rule is given, we can directly locate
-    # the affected acl records, so no need to compare new acl values with
-    # existing acl objects, such as case create_security_group_rule or
-    # delete_security_group_rule is calling this. But for other cases,
-    # since we don't know which acl records need be updated, compare will
-    # be needed.
-    need_compare = True
-    if rule:
-        need_compare = False
-        for port in port_list:
-            acl = _add_sg_rule_acl_for_port(port, rule)
-            if acl:
-                # Remove lport and lswitch since we don't need them
-                acl.pop('lport')
-                acl.pop('lswitch')
-                acl_new_values_dict[port['id']] = acl
-    else:
-        for port in port_list:
-            acls_new = add_acls(plugin,
-                                admin_context,
-                                port,
-                                sg_cache,
-                                subnet_cache)
-            acl_new_values_dict[port['id']] = acls_new
+    # NOTE(lizk): We can directly locate the affected acl records,
+    # so no need to compare new acl values with existing acl objects.
+    for port in port_list:
+        acl = _add_sg_rule_acl_for_port(port, security_group_rule)
+        if acl:
+            # Remove lport and lswitch since we don't need them
+            acl.pop('lport')
+            acl.pop('lswitch')
+            acl_new_values_dict[port['id']] = acl
 
     ovn.update_acls(list(lswitch_names),
                     iter(port_list),
                     acl_new_values_dict,
-                    need_compare=need_compare,
+                    need_compare=False,
                     is_add_acl=is_add_acl).execute(check_error=True)
 
 
@@ -313,14 +290,20 @@ def add_acls(plugin, admin_context, port, sg_cache, subnet_cache):
     # Drop all IP traffic to and from the logical port by default.
     acl_list += drop_all_ip_traffic_for_port(port)
 
-    for ip in port['fixed_ips']:
-        if netaddr.IPNetwork(ip['ip_address']).version != 4:
-            continue
-        subnet = _get_subnet_from_cache(plugin,
-                                        admin_context,
-                                        subnet_cache,
-                                        ip['subnet_id'])
-        acl_list += add_acl_dhcp(port, subnet)
+    # Add DHCP ACLs if not using OVN native DHCP.
+    if not config.is_ovn_dhcp():
+        port_subnet_ids = set()
+        for ip in port['fixed_ips']:
+            if netaddr.IPNetwork(ip['ip_address']).version != 4:
+                continue
+            subnet = _get_subnet_from_cache(plugin,
+                                            admin_context,
+                                            subnet_cache,
+                                            ip['subnet_id'])
+            # Ignore duplicate DHCP ACLs for the subnet.
+            if subnet['id'] not in port_subnet_ids:
+                acl_list += add_acl_dhcp(port, subnet)
+                port_subnet_ids.add(subnet['id'])
 
     # We create an ACL entry for each rule on each security group applied
     # to this port.

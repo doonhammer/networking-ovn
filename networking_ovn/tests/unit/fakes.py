@@ -47,14 +47,27 @@ class FakeOvsdbNbOvnIdl(object):
         self.add_static_route = mock.Mock()
         self.delete_static_route = mock.Mock()
         self.create_address_set = mock.Mock()
+        self.update_address_set_ext_ids = mock.Mock()
         self.delete_address_set = mock.Mock()
         self.update_address_set = mock.Mock()
+        self.get_all_chassis_router_bindings = mock.Mock()
+        self.get_router_chassis_binding = mock.Mock()
+        self.get_unhosted_routers = mock.Mock()
+        self.add_dhcp_options = mock.Mock()
+        self.delete_dhcp_options = mock.Mock()
+        self.get_subnet_dhcp_options = mock.Mock()
+        self.get_subnet_dhcp_options.return_value = {}
+        self.get_port_dhcp_options = mock.Mock()
+        self.get_port_dhcp_options.return_value = {}
+        self.compose_dhcp_options_commands = mock.MagicMock()
 
 
 class FakeOvsdbSbOvnIdl(object):
 
     def __init__(self, **kwargs):
         self.get_chassis_hostname_and_physnets = mock.Mock()
+        self.get_chassis_hostname_and_physnets.return_value = {}
+        self.get_all_chassis = mock.Mock()
 
 
 class FakePlugin(object):

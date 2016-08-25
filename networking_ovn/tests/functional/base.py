@@ -19,7 +19,6 @@ import time
 from oslo_config import cfg
 from oslo_log import log
 
-from neutron._i18n import _LE
 from neutron.agent.ovsdb import impl_idl
 from neutron.agent.ovsdb.native import connection
 from neutron import manager
@@ -27,6 +26,7 @@ from neutron.plugins.common import constants as service_constants
 from neutron.plugins.ml2 import config
 from neutron.tests.unit.plugins.ml2 import test_plugin
 
+from networking_ovn._i18n import _LE
 from networking_ovn.ovsdb import impl_idl_ovn
 from networking_ovn.ovsdb import ovsdb_monitor
 from networking_ovn.tests.functional.resources import process
@@ -95,6 +95,12 @@ class TestOVNFunctionalBase(test_plugin.Ml2PluginV2TestCase):
             self.ovsdb_server_mgr.get_ovsdb_connection_path(db_type='sb'),
             'ovn')
         num_attempts = 0
+        # 5 seconds should be more than enough for the transaction to complete
+        # for the test cases.
+        # This also fixes the bug #1607639.
+        cfg.CONF.set_override(
+            'ovsdb_connection_timeout', 5,
+            'ovn')
 
         # Created monitor IDL connection to the OVN NB DB.
         # This monitor IDL connection can be used to
@@ -136,7 +142,8 @@ class TestOVNFunctionalBase(test_plugin.Ml2PluginV2TestCase):
         impl_idl_ovn.OvsdbSbOvnIdl.ovsdb_connection = None
         self.mech_driver._nb_ovn = None
         self.mech_driver._sb_ovn = None
-        self.l3_plugin._nb_ovn = None
+        self.l3_plugin._nb_ovn_idl = None
+        self.l3_plugin._sb_ovn_idl = None
         self.monitor_idl_con = None
 
         self._start_ovsdb_server_and_idls()
