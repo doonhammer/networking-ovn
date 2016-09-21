@@ -16,7 +16,7 @@ from oslo_config import cfg
 from oslo_db import options as db_options
 from oslo_log import log as logging
 
-from neutron.agent import securitygroups_rpc
+from neutron.conf.agent import securitygroups_rpc
 from neutron import context
 from neutron import manager
 from neutron import opts as neutron_options
@@ -123,8 +123,9 @@ def main():
                           "--database-connection value again"))
         return
     try:
-        synchronizer.sync_networks_and_ports(ctx)
+        synchronizer.sync_networks_ports_and_dhcp_opts(ctx)
     except Exception:
+        # TODO(lizk): Update this when the next series development opens
         LOG.exception(_LE("Error syncing  Networks and Ports for unknown "
                           "reason please try again"))
         return
